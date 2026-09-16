@@ -121,6 +121,10 @@ class CombatFighter(CustomAction):
         ctrl = context.tasker.controller
         print(f"[CombatFighter] 开始（{duration:.0f}s 上限）", flush=True)
         deadline = time.time() + duration
+        # 结算识别降频：全屏模板识别在慢环境下单次可达 1~2.4s，
+        # 每轮都查会把出招拖成涓流。每 result_interval 秒查一次足够（60s 级别的战斗）。
+        result_interval = float(param.get("result_interval", 4.0))
+        next_result_check = 0.0
 
         # 开打自检：确认画面真的是战斗界面（截图若失败会是旧帧，这里能暴露）
         _shot(ctrl)
@@ -149,7 +153,7 @@ class CombatFighter(CustomAction):
 
                 # 每 10s 打一个画面指纹：数字一直完全不变 => 截图是死的旧帧
                 now = time.time()
-                if img is not None and now - last_report >= 10:
+                if img is not None and getattr(img, "size", 0) and now - last_report >= 10:
                     last_report = now
                     try:
                         fp = float(img.mean())
@@ -157,11 +161,14 @@ class CombatFighter(CustomAction):
                         fp = -1.0
                     print(f"[CombatFighter] t={now - t0:.0f}s 画面均值={fp:.1f}", flush=True)
 
-                if img is not None and self._hit_any(context, img, result_nodes):
-                    break
+                # 结算识别（降频）：只在到达检查时刻才跑，中间的轮次纯出招
+                if img is not None and getattr(img, "size", 0) and now >= next_result_check:
+                    next_result_check = now + result_interval
+                    if self._hit_any(context, img, result_nodes):
+                        break
 
                 # 替身：受击发光才点，其余技能不识别
-                if img is not None and recog_nodes:
+                if img is not None and getattr(img, "size", 0) and recog_nodes:
                     for node in recog_nodes:
                         if self._hit_any(context, img, [node]):
                             key = self._key_of(node)

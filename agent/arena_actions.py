@@ -58,7 +58,7 @@ class ArenaPick(CustomAction):
         if not ok:
             return False
         time.sleep(0.4)
-        ctrl.post_click(*confirm_xy).wait()
+        ctrl.post_click(*confirm_xy)  # 发完就走，不等回执（慢环境防阻塞）
         return True
 
     def _quick(self, ctrl, param, slots, slot_r, slot_sat) -> bool:
@@ -66,12 +66,32 @@ class ArenaPick(CustomAction):
         if len(targets) != 3:
             print("[ArenaPick] quick_targets 必须是 3 个 [x,y]")
             return False
-        print("[ArenaPick] 快速选人：点近期使用最左一列 3 人（上→下），点到左下框亮为止")
-        for i, (x, y) in enumerate(targets, 1):
-            if not self._click_until_slot(ctrl, int(x), int(y), i, slots, slot_r, slot_sat,
-                                          tag=f"左列#{i}", max_tries=12):
-                print(f"[ArenaPick] 左列第 {i} 个连点后左下框仍未亮")
-                return False
+        print("[ArenaPick] 快速选人：点近期使用最左一列 3 人（上→下）")
+        # 慢环境优化：agent↔宿主图像传输可能降级（空图/单次数十秒），
+        # 点击一律“发完就走”不等回执；先三人各点 1 次，再限时验证补漏。
+        for x, y in targets:
+            ctrl.post_click(int(x), int(y))
+            time.sleep(0.35)
+        # 验证窗口上限：到点直接返回去点确定（游戏选人倒计时也会自动确认）
+        deadline = time.time() + float(param.get("verify_timeout", 15))
+        n = 0
+        while time.time() < deadline:
+            n = self._count_selected(ctrl, slots, slot_r, slot_sat)
+            if n >= 3:
+                print(f"[ArenaPick] ✓ 已选框 3/3")
+                return True
+            # 槽位按顺序点亮：只补没亮的
+            for i, (x, y) in enumerate(targets, 1):
+                if i <= n:
+                    continue
+                print(f"[ArenaPick] 补点 左列#{i}（已选框 {n}/3）({x},{y})")
+                ctrl.post_click(int(x), int(y))
+                time.sleep(0.35)
+            time.sleep(0.5)
+        print(f"[ArenaPick] 选人结束（限时到），最后已选框 {n}/3（三人至少各点过 1 次）")
+        if n < 3:
+            print("[ArenaPick] ⚠ 未选满 3 人：若当前不是「近期使用」快速选人页，"
+                  "请在游戏内开启快速选人；或把 UI 选项「快速选人」设为关闭走模板选人", flush=True)
         return True
 
     def _roster(self, ctrl, param, slots, slot_r, slot_sat) -> bool:
@@ -205,7 +225,8 @@ class ArenaPick(CustomAction):
         if getattr(st, "succeeded", None) is False:
             print("[ArenaPick] 截图失败（下面读到的是旧帧！）", flush=True)
         img = ctrl.cached_image
-        if img is None:
+        if img is None or not getattr(img, "size", 0):
+            print("[ArenaPick] 截图为空（图像通道降级），计数不可靠", flush=True)
             return 0
         sc = img.shape[1] / 1280.0
         n = 0
