@@ -1,12 +1,12 @@
-﻿[remote.github]
-owner = "浣犵殑GitHub鐢ㄦ埛鍚?
+[remote.github]
+owner = "a914259894-star"
 repo = "MaaKOF_Fate"
-# 鑷敤鏃舵崲鎴愯嚜宸辩殑浠撳簱owner鍜宺epo
-# 娉ㄦ剰锛屾湰鍦癵it user闇€涓巊ithub涓€鑷存墠鑳藉疄鐜版垚鍔烜
+# 自用时换成自己的仓库owner和repo
+# 注意，本地git user需与github一致才能实现成功@
 [changelog]
-# 鏍囬
+# 标题
 header = """
-# 鏇存柊鏃ュ織
+# 更新日志
 """
 
 body = """
@@ -31,7 +31,8 @@ body = """
 {% if version %}\
     ## {{ version | trim_start_matches(pat="v") }} ({{ timestamp | date(format="%Y-%m-%d") }})
 {% else %}\
-    ## 鏈彂甯?{% endif %}\
+    ## 未发布
+{% endif %}\
 
 {% for group, commits in commits | group_by(attribute="group") %}
     ### {{ group | striptags | trim | upper_first }}
@@ -48,7 +49,7 @@ body = """
 {% endfor -%}
 {%- if github -%}
 {% if github.contributors | filter(attribute="is_first_time", value=true) | length != 0 %}
-  ## 鏂拌础鐚€?鉂わ笍
+  ## 新贡献者 ❤️
 {% endif %}\
 {% for contributor in github.contributors | filter(attribute="is_first_time", value=true) %}
   * @{{ contributor.username }} made their first contribution
@@ -59,40 +60,42 @@ body = """
 {%- endif %}
 """
 
-# 灏鹃儴
+# 尾部
 footer = """
 """
 
 [git]
-# 杩囨护鎻愪氦
-conventional_commits = true # 浣跨敤绾﹀畾寮忔彁浜ゆ牸寮?filter_unconventional = false # 涓嶈繃婊ら潪绾﹀畾寮忔彁浜?# 鍚敤瀹屾暣鐨?commit 淇℃伅
+# 过滤提交
+conventional_commits = true # 使用约定式提交格式
+filter_unconventional = false # 不过滤非约定式提交
+# 启用完整的 commit 信息
 split_commits = false
-# 淇濈暀瀹屾暣鐨?commit body
+# 保留完整的 commit body
 protect_breaking_commits = false
 commit_parsers = [
-    # 璺宠繃鍖呭惈 [skip changelog] 鐨?commit
+    # 跳过包含 [skip changelog] 的 commit
     { message = ".*\\[skip changelog\\].*", skip = true },
     { body = ".*\\[skip changelog\\].*", skip = true },
-    { message = "^feat", group = "<!-- 0 -->鉁?鏂板姛鑳? },
-    { message = "^fix", group = "<!-- 1 -->馃悰 Bug淇" },
-    { message = "^docs", group = "<!-- 4 -->馃摎 鏂囨。" },
-    { message = "^perf", group = "<!-- 3 -->馃殌 鎬ц兘浼樺寲" },
-    { message = "^refactor", group = "<!-- 2 -->馃殰 浠ｇ爜閲嶆瀯" },
-    { message = "^style", group = "<!-- 5 -->馃帹 鏍峰紡" },
-    { message = "^test", group = "<!-- 6 -->馃И 娴嬭瘯" },
-    { message = "^chore\\(deps\\)", group = "馃摝 渚濊禆鏇存柊" },
-    { message = "^chore", group = "<!-- 8 -->馃敡 鏃ュ父缁存姢" },
-    { message = "^ci", group = "<!-- 7 -->鈿欙笍 鎸佺画闆嗘垚" },
-    { body = ".*security", group = "<!-- 9 -->馃敀 瀹夊叏" },
-    { message = "^revert", group = "<!-- 10 -->鈼€锔?鎾ら攢" },
+    { message = "^feat", group = "<!-- 0 -->✨ 新功能" },
+    { message = "^fix", group = "<!-- 1 -->🐛 Bug修复" },
+    { message = "^docs", group = "<!-- 4 -->📚 文档" },
+    { message = "^perf", group = "<!-- 3 -->🚀 性能优化" },
+    { message = "^refactor", group = "<!-- 2 -->🚜 代码重构" },
+    { message = "^style", group = "<!-- 5 -->🎨 样式" },
+    { message = "^test", group = "<!-- 6 -->🧪 测试" },
+    { message = "^chore\\(deps\\)", group = "📦 依赖更新" },
+    { message = "^chore", group = "<!-- 8 -->🔧 日常维护" },
+    { message = "^ci", group = "<!-- 7 -->⚙️ 持续集成" },
+    { body = ".*security", group = "<!-- 9 -->🔒 安全" },
+    { message = "^revert", group = "<!-- 10 -->◀️ 撤销" },
 ]
 
-# 蹇界暐杩欎簺鎻愪氦
+# 忽略这些提交
 ignore_tags = "rc"
 
-# 鎺掑簭瑙勫垯
+# 排序规则
 sort_commits = "oldest"
 
-# 鍚敤GitHub闆嗘垚
+# 启用GitHub集成
 [git.github]
 commits = true
