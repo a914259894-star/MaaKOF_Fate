@@ -1,0 +1,206 @@
+{
+    "Arena_Enter_1v1": {
+        "recognition": "TemplateMatch",
+        "template": "arena/main_arena_btn.png",
+        "green_mask": false,
+        "threshold": 0.7,
+        "action": "Click",
+        "pre_delay": 300,
+        "post_delay": 1000,
+        "rate_limit": 1000,
+        "timeout": 30000,
+        "next": [
+            "Arena_Mode_1v1"
+        ]
+    },
+    "Arena_Enter_Master": {
+        "recognition": "TemplateMatch",
+        "template": "arena/main_arena_btn.png",
+        "green_mask": false,
+        "threshold": 0.7,
+        "action": "Click",
+        "pre_delay": 300,
+        "post_delay": 1000,
+        "rate_limit": 1000,
+        "timeout": 30000,
+        "next": [
+            "Arena_Mode_Master"
+        ]
+    },
+    "Arena_Mode_1v1": {
+        "recognition": "TemplateMatch",
+        "template": "arena/mode_1v1.png",
+        "green_mask": false,
+        "threshold": 0.7,
+        "action": "Click",
+        "pre_delay": 500,
+        "post_delay": 1000,
+        "rate_limit": 1000,
+        "timeout": 60000,
+        "next": [
+            "Arena_WaitPick"
+        ]
+    },
+    "Arena_Mode_Master": {
+        "recognition": "TemplateMatch",
+        "template": "arena/mode_master.png",
+        "green_mask": false,
+        "threshold": 0.7,
+        "action": "Click",
+        "pre_delay": 500,
+        "post_delay": 1000,
+        "rate_limit": 1000,
+        "timeout": 30000,
+        "next": [
+            "Arena_WaitPick"
+        ]
+    },
+    "Arena_WaitPick": {
+        "recognition": "TemplateMatch",
+        "template": [
+            "arena/pick_recent.png",
+            "arena/pick_wait.png"
+        ],
+        "green_mask": false,
+        "threshold": 0.8,
+        "action": "DoNothing",
+        "rate_limit": 1000,
+        "timeout": 120000,
+        "next": [
+            "Arena_Pick"
+        ]
+    },
+    "Arena_Pick": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "ArenaPick",
+        "custom_action_param": {
+            "quick_pick": true,
+            "quick_targets": [
+                [
+                    94,
+                    98
+                ],
+                [
+                    94,
+                    206
+                ],
+                [
+                    94,
+                    315
+                ]
+            ],
+            "picks": [
+                [
+                    1,
+                    1,
+                    1
+                ],
+                [
+                    1,
+                    2,
+                    1
+                ],
+                [
+                    1,
+                    3,
+                    1
+                ]
+            ],
+            "roi": [
+                0,
+                0,
+                1280,
+                370
+            ],
+            "threshold": 0.72,
+            "max_drags": 2,
+            "swipe": {
+                "from": [
+                    829,
+                    230
+                ],
+                "to": [
+                    433,
+                    230
+                ],
+                "ms": 1200,
+                "settle_ms": 800
+            },
+            "confirm": [
+                622,
+                638
+            ],
+            "slots": [
+                [
+                    39,
+                    668
+                ],
+                [
+                    108,
+                    668
+                ],
+                [
+                    177,
+                    668
+                ]
+            ],
+            "slot_r": 20,
+            "slot_sat": 60
+        },
+        "timeout": 300000,
+        "next": [
+            "Arena_WaitBattle"
+        ]
+    },
+    "Arena_WaitBattle": {
+        "recognition": "TemplateMatch",
+        "template": [
+            "arena/battle_bar.png",
+            "arena/battle_btn.png"
+        ],
+        "green_mask": false,
+        "threshold": 0.8,
+        "action": "DoNothing",
+        "rate_limit": 1000,
+        "timeout": 90000,
+        "next": [
+            "Fight_Once"
+        ]
+    },
+    "Arena_SettleOk": {
+        "recognition": "TemplateMatch",
+        "template": "arena/settle_confirm.png",
+        "green_mask": false,
+        "threshold": 0.8,
+        "order_by": "Score",
+        "action": "Click",
+        "pre_delay": 200,
+        "post_delay": 1000,
+        "rate_limit": 1000,
+        "timeout": 60000,
+        "next": [
+            "Arena_LeaveSettle",
+            "Arena_SettleOk"
+        ]
+    },
+    "Arena_LeaveSettle": {
+        "recognition": "TemplateMatch",
+        "template": [
+            "arena/win_text.png",
+            "arena/lose_text.png",
+            "arena/settle_confirm.png"
+        ],
+        "green_mask": false,
+        "threshold": 0.7,
+        "inverse": true,
+        "action": "DoNothing",
+        "rate_limit": 500,
+        "timeout": 60000,
+        "next": [
+            "Arena_WaitBattle",
+            "Arena_Mode_1v1",
+            "Arena_Enter_1v1"
+        ]
+    }
+}

@@ -12,8 +12,6 @@ except ModuleNotFoundError as e:
         "Or add it to your project's requirements."
     ) from e
 
-from configure import configure_ocr_model
-
 
 working_dir = Path(__file__).parent.parent.resolve()
 install_path = working_dir / Path("install")
@@ -98,11 +96,9 @@ def install_deps():
         )
 
 
-
 def install_resource():
-
-    configure_ocr_model()
-
+    # 本项目所有识别均为 TemplateMatch，不使用 OCR 模型，
+    # 因此相比官方模板去掉了 configure_ocr_model() 步骤。
     shutil.copytree(
         working_dir / "assets" / "resource",
         install_path / "resource",
@@ -123,14 +119,13 @@ def install_resource():
 
 
 def install_chores():
-    shutil.copy2(
-        working_dir / "README.md",
-        install_path,
-    )
-    shutil.copy2(
-        working_dir / "LICENSE",
-        install_path,
-    )
+    # README / LICENSE 缺失时跳过（不阻塞打包）
+    for name in ("README.md", "LICENSE"):
+        src = working_dir / name
+        if src.exists():
+            shutil.copy2(src, install_path)
+        else:
+            print(f"[install] {name} 不存在，跳过")
 
 
 def install_agent():

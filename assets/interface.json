@@ -1,109 +1,59 @@
 {
-    // 本文件主要定义了通用 UI 的行为和显示内容
-    // 可参考文档和示例添加更多您需要的功能
-    // 文档：https://maafw.xyz/docs/3.3-ProjectInterfaceV2
-    // 示例：https://github.com/MaaXYZ/MaaFramework/blob/main/sample/interface.json
     "interface_version": 2,
-    "name": "MaaXXX",
-    "description": "这是一个使用 MaaFramework 创建的新项目。",
-    "contact": "QQ群: 123456789",
-    "license": "MIT",
-    "welcome": "首次使用！欢迎使用 MAA!",
-    // 填写项目地址和版本号可实现自动更新功能
-    "github": "https://github.com/MaaXYZ/MaaPracticeBoilerplate",
+    "name": "MaaKOF_Fate",
+    "title": "MaaKOF_Fate 竞技场自动化",
+    "description": "基于 MaaFramework 的格斗手游竞技场自动化：快速选人 → 战斗（技能循环 + 普攻 + 替身识别）→ 结算确认 → 按所选模式自动循环。坐标以 1280x720 为基准，适配 16:9 安卓模拟器（MuMu 2560x1440 实测）。",
     "version": "1.0.0",
-    // Mirror酱为第三方分发服务，新项目默认关闭
-    // 若有需要请联系 Mirror酱 开通，直接自行开启是无法使用的
-    // "mirrorchyan_rid": "MaaXXX",
-    // "mirrorchyan_multiplatform": true,
+    "welcome": "# 使用前必读\n\n- 请从游戏**主界面**开始运行（竞技场任务）\n- 模拟器分辨率建议 2560x1440（16:9 均可），输入方式由 MaaFramework 自动选择\n- 「战斗·单场」仅在**已进入战斗画面**时使用，它会立刻开始盲点技能按钮\n- 「竞技场·大师」需要已解锁大师竞技场\n- 依赖：电脑需安装 Python 并 `pip install maafw opencv-python`",
     "controller": [
         {
             "name": "安卓端",
             "type": "Adb",
-            "display_short_side": 720 // 默认缩放分辨率的短边长度
-        },
-        {
-            "name": "桌面端",
-            "type": "Win32",
-            "win32": {
-                "class_regex": ".*",
-                "window_regex": "Visual Studio",
-                // 截图及控制方式，请根据项目实际情况修改
-                // 文档: https://maafw.xyz/docs/2.4-ControlMethods
-                "screencap": "PrintWindow", // 截图方式
-                "mouse": "PostMessageWithCursorPos", // 鼠标控制方式
-                "keyboard": "PostMessageWithCursorPos" // 键盘控制方式
-            }
+            "display_short_side": 720
         }
     ],
     "resource": [
         {
-            "name": "官服",
+            "name": "默认",
             "path": [
                 "./resource"
-            ]
-        },
-        {
-            "name": "B 服",
-            "path": [
-                "./resource"
-                // "./resource_bilibili"
             ]
         }
     ],
-    // 可选的 agent 示例
-    // "agent": {
-    //     "child_exec": "python",
-    //     "child_args": [
-    //         "./agent/main.py"
-    //     ]
-    // },
+    "agent": {
+        "child_exec": "python",
+        "child_args": [
+            "./agent/main.py"
+        ]
+    },
     "task": [
         {
-            "name": "普通任务",
-            "entry": "MyTask1"
+            "name": "arena_1v1",
+            "label": "竞技场·1v1 循环",
+            "entry": "Arena_Enter_1v1",
+            "default_check": true,
+            "description": "从主界面进入竞技场 → 1v1 → 快速选人（近期使用最左列）→ 战斗 → 结算点确认 → 回竞技区自动开下一场，循环直到手动停止"
         },
         {
-            "name": "选项任务",
-            "entry": "MyTask2",
-            "option": [
-                "任务选项1"
-            ]
-        },
-        {
-            "name": "参数任务",
-            "entry": "MyTask3",
-            "option": [
-                "任务选项1"
-            ],
-            "pipeline_override": {}
-        },
-        {
-            "name": "自定义识别与动作示例",
-            "entry": "FindSmallestNumber"
-        }
-    ],
-    "option": {
-        "任务选项1": {
-            "type": "select",
-            "cases": [
-                {
-                    "name": "文本1",
-                    "pipeline_override": {
-                        "OcrTask": {
-                            "text": "文本1"
-                        }
-                    }
-                },
-                {
-                    "name": "文本2",
-                    "pipeline_override": {
-                        "OcrTask": {
-                            "text": "文本2"
-                        }
-                    }
+            "name": "arena_master",
+            "label": "竞技场·大师 循环",
+            "entry": "Arena_Enter_Master",
+            "description": "需要已解锁大师竞技场。大师模式循环：结算后回竞技区自动再进大师场",
+            "pipeline_override": {
+                "Arena_LeaveSettle": {
+                    "next": [
+                        "Arena_WaitBattle",
+                        "Arena_Mode_Master",
+                        "Arena_Enter_Master"
+                    ]
                 }
-            ]
+            }
+        },
+        {
+            "name": "fight_once",
+            "label": "战斗·单场挂机",
+            "entry": "Fight_Once",
+            "description": "不进出竞技场，从当前画面直接打完一场：技能循环 + 普攻 + 替身识别 + 结算识别。⚠️ 仅在已进入战斗画面时勾选（入口为 DirectHit，会立刻开始点击）"
         }
-    }
+    ]
 }

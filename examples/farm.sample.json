@@ -1,0 +1,72 @@
+{
+    "Farm_Enter": {
+        "recognition": "OCR",
+        "expected": [
+            "挑战",
+            "开始"
+        ],
+        "roi": [
+            1050,
+            580,
+            230,
+            140
+        ],
+        "replace": [],
+        "action": "Click",
+        "next": [
+            "Fight_Once"
+        ]
+    },
+    "Farm_Settle": {
+        "recognition": "OCR",
+        "expected": [
+            "领取",
+            "确定"
+        ],
+        "roi": [
+            400,
+            300,
+            480,
+            200
+        ],
+        "replace": [],
+        "action": "Click",
+        "next": [
+            "Farm_Retry",
+            "Farm_NoStamina"
+        ]
+    },
+    "Farm_Retry": {
+        "recognition": "OCR",
+        "expected": [
+            "再次挑战",
+            "再来一次"
+        ],
+        "roi": [
+            400,
+            560,
+            480,
+            160
+        ],
+        "replace": [],
+        "action": "Click",
+        "next": [
+            "Fight_Once"
+        ]
+    },
+    "Farm_NoStamina": {
+        "recognition": "OCR",
+        "expected": [
+            "体力不足",
+            "次数不足"
+        ],
+        "roi": [
+            400,
+            300,
+            480,
+            200
+        ],
+        "replace": [],
+        "action": "StopTask"
+    }
+}

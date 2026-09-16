@@ -1,0 +1,24 @@
+MaaKOF_Fate 接入包 2026-09-15
+================================
+本次内容：
+1. 选人（Arena_Pick）：栏/行/列命名角色模板 ×90（栏1~10 全量，逐张验证：
+   双源交叉≥0.969/冒充矩阵max 0.677/全图定位 90/90）。停靠漂移已标定，
+   文档含补裁须知。
+2. 战斗（Fight_Once）：连点器模式——默认连点普攻3次(按30/停30)，每轮识别
+   [替身(受击+能量足)→大招→技1~3→秘笈]，命中点对应位置后回到连点。
+   normal_tap.times 可调每轮连点数。
+3. interface.json：大师竞技场备注更新（已解锁）。
+
+接入步骤（PowerShell）：
+1. 把本 zip 下到本地，例如 下载 目录
+2. 解压覆盖到项目根（保持目录结构）：
+   Expand-Archive <zip路径> -Destination D:\Projects\MaaKOF_Fate\MaaKOF_Fate -Force
+3. 重启 agent 进程（.py 有改动，必须重启）：关掉旧 agent → python main.py
+4. MaaDebugger：Adb Connect → Resource ./assets/resource → Agent Connect
+5. 测试场景④（全链路）：跑任务"竞技场·1V1排位"，Override:
+   {"Arena_WaitBattle":{"next":["Fight_Once"]}}
+6. 改选人：assets/resource/pipeline/arena.json → Arena_Pick.custom_action_param.picks
+   = [[栏,行,列]×3]（栏=3x3面板号1~10）。当前为占位示例 [[1,1,1],[4,2,3],[10,3,2]]
+
+注意：本包会覆盖同名文件；若你本地改过这些文件的参数，请先备份。
+详见 examples/arena.说明.md 与 接入与测试指南.md。

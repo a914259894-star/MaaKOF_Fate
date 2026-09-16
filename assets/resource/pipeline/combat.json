@@ -1,0 +1,251 @@
+{
+    "Fight_Once": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "CombatFighter",
+        "custom_action_param": {
+            "duration": 900,
+            "interval": 0,
+            "skills": [
+                "Fight_Substitute"
+            ],
+            "skill_cycle": [
+                "skill1",
+                "skill2",
+                "skill3",
+                "ult",
+                "secret"
+            ],
+            "skill_tap": {
+                "hold_ms": 30,
+                "interval_ms": 30
+            },
+            "result_nodes": [
+                "Fight_Win",
+                "Fight_Lose"
+            ],
+            "normal_tap": {
+                "hold_ms": 30,
+                "interval_ms": 30,
+                "times": 3
+            },
+            "keep_moving": false,
+            "move_dir": [
+                -1,
+                0
+            ]
+        },
+        "timeout": 960000,
+        "next": [
+            "Fight_Win",
+            "Fight_Lose"
+        ]
+    },
+    "Fight_Loop": {
+        "recognition": "DirectHit",
+        "action": "DoNothing",
+        "rate_limit": 100,
+        "timeout": 600000,
+        "next": [
+            "Fight_Win",
+            "Fight_Lose",
+            "Fight_Substitute",
+            "Fight_Ult",
+            "Fight_Skill1",
+            "Fight_Skill2",
+            "Fight_Skill3",
+            "Fight_Secret",
+            "Fight_NormalAttack"
+        ]
+    },
+    "Fight_Substitute": {
+        "recognition": "Custom",
+        "custom_recognition": "SkillReadyBright",
+        "custom_recognition_param": {
+            "mode": "ratio",
+            "v_thresh": 245,
+            "threshold": 0.1,
+            "confirm": 1
+        },
+        "roi": [
+            1220,
+            544,
+            25,
+            25
+        ],
+        "action": "Click",
+        "pre_delay": 0,
+        "post_delay": 150,
+        "rate_limit": 100,
+        "timeout": 600000,
+        "next": [
+            "Fight_Loop"
+        ]
+    },
+    "Fight_Ult": {
+        "recognition": "Custom",
+        "custom_recognition": "SkillReadyBright",
+        "custom_recognition_param": {
+            "mode": "ratio",
+            "v_thresh": 160,
+            "threshold": 0.45,
+            "confirm": 1
+        },
+        "roi": [
+            1198,
+            310,
+            28,
+            31
+        ],
+        "action": "Click",
+        "pre_delay": 0,
+        "post_delay": 150,
+        "rate_limit": 100,
+        "timeout": 600000,
+        "next": [
+            "Fight_Loop"
+        ]
+    },
+    "Fight_Skill1": {
+        "recognition": "Custom",
+        "custom_recognition": "SkillReadyBright",
+        "custom_recognition_param": {
+            "mode": "ratio",
+            "v_thresh": 160,
+            "threshold": 0.5,
+            "confirm": 1
+        },
+        "roi": [
+            964,
+            626,
+            35,
+            34
+        ],
+        "action": "Click",
+        "pre_delay": 0,
+        "post_delay": 150,
+        "rate_limit": 100,
+        "timeout": 600000,
+        "next": [
+            "Fight_Loop"
+        ]
+    },
+    "Fight_Skill2": {
+        "recognition": "Custom",
+        "custom_recognition": "SkillReadyBright",
+        "custom_recognition_param": {
+            "mode": "ratio",
+            "v_thresh": 160,
+            "threshold": 0.5,
+            "confirm": 1
+        },
+        "roi": [
+            1030,
+            495,
+            30,
+            33
+        ],
+        "action": "Click",
+        "pre_delay": 0,
+        "post_delay": 150,
+        "rate_limit": 100,
+        "timeout": 600000,
+        "next": [
+            "Fight_Loop"
+        ]
+    },
+    "Fight_Skill3": {
+        "recognition": "Custom",
+        "custom_recognition": "SkillReadyBright",
+        "custom_recognition_param": {
+            "channel": "s",
+            "mode": "median",
+            "threshold": 150,
+            "confirm": 1
+        },
+        "roi": [
+            1155,
+            433,
+            27,
+            29
+        ],
+        "action": "Click",
+        "pre_delay": 0,
+        "post_delay": 150,
+        "rate_limit": 100,
+        "timeout": 600000,
+        "next": [
+            "Fight_Loop"
+        ]
+    },
+    "Fight_Secret": {
+        "recognition": "Custom",
+        "custom_recognition": "SkillReadyBright",
+        "custom_recognition_param": {
+            "mode": "ratio",
+            "v_thresh": 160,
+            "threshold": 0.65,
+            "confirm": 1
+        },
+        "roi": [
+            1213,
+            216,
+            27,
+            28
+        ],
+        "action": "Click",
+        "pre_delay": 0,
+        "post_delay": 150,
+        "rate_limit": 100,
+        "timeout": 600000,
+        "next": [
+            "Fight_Loop"
+        ]
+    },
+    "Fight_NormalAttack": {
+        "recognition": "Custom",
+        "custom_recognition": "CombatAlwaysHit",
+        "roi": [
+            1079,
+            574,
+            116,
+            116
+        ],
+        "action": "Custom",
+        "custom_action": "CombatNormalAttack",
+        "custom_action_param": {
+            "times": 1,
+            "hold_ms": 60,
+            "interval_ms": 80
+        },
+        "pre_delay": 0,
+        "post_delay": 0,
+        "rate_limit": 50,
+        "timeout": 600000,
+        "next": [
+            "Fight_Loop"
+        ]
+    },
+    "Fight_Win": {
+        "recognition": "TemplateMatch",
+        "template": "arena/win_text.png",
+        "green_mask": false,
+        "threshold": 0.8,
+        "action": "DoNothing",
+        "timeout": 120000,
+        "next": [
+            "Arena_SettleOk"
+        ]
+    },
+    "Fight_Lose": {
+        "recognition": "TemplateMatch",
+        "template": "arena/lose_text.png",
+        "green_mask": false,
+        "threshold": 0.8,
+        "action": "DoNothing",
+        "timeout": 120000,
+        "next": [
+            "Arena_SettleOk"
+        ]
+    }
+}
