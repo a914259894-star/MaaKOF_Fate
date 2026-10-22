@@ -26,11 +26,23 @@ import os
 import time
 
 import cv2
+import numpy as np
 
 from maa.context import Context
 from maa.custom_action import CustomAction
 
 _TEMPLATE_CACHE: dict[str, "cv2.Mat"] = {}
+
+
+def imread_cn(path: str, flags: int = cv2.IMREAD_GRAYSCALE):
+    """cv2.imread 在 Windows 上走窄字符 API，路径含中文（如 D:\\桌面\\kof）直接
+    can't open/read file，导致选人模板全部加载失败、选人节点立即失败停止。
+    改用 np.fromfile + cv2.imdecode（Python 文件接口），任意路径都能读。
+    读取失败返回 None（与 imread 行为一致）。"""
+    try:
+        return cv2.imdecode(np.fromfile(path, dtype=np.uint8), flags)
+    except (OSError, ValueError):
+        return None
 
 
 def _find_roles_dir() -> str:
@@ -217,7 +229,7 @@ class ArenaPick(CustomAction):
         if rel in _TEMPLATE_CACHE:
             return _TEMPLATE_CACHE[rel]
         path = os.path.join(_ARENA_DIR, *rel.split("/")) + ".png"
-        tpl = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        tpl = imread_cn(path, cv2.IMREAD_GRAYSCALE)
         if tpl is None:
             return None
         _TEMPLATE_CACHE[rel] = tpl

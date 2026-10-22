@@ -21,7 +21,7 @@ import cv2
 from maa.context import Context
 from maa.custom_action import CustomAction
 
-from arena_actions import _ARENA_DIR  # .../resource/image/arena（复用路径定位）
+from arena_actions import _ARENA_DIR, imread_cn  # .../image/arena（复用路径定位 + 中文路径安全读图）
 
 # ================== 战斗 UI 固定坐标（1280x720 基准，MFATools 实测 2026-09） ==================
 JOYSTICK = (167, 531)        # 摇杆中心
@@ -265,7 +265,7 @@ class CombatFighter(CustomAction):
         """加载 arena 目录下灰度模板（带缓存），失败返回 None。"""
         if rel not in cls._TPL_CACHE:
             path = os.path.join(_ARENA_DIR, *rel.split("/")) + ".png"
-            tpl = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+            tpl = imread_cn(path, cv2.IMREAD_GRAYSCALE)
             if tpl is None:
                 print(f"[CombatFighter] 缺少模板 {rel}.png", flush=True)
                 cls._TPL_CACHE[rel] = None
