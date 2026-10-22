@@ -20,6 +20,13 @@ interface.json 的 agent.child_exec 指向 ./libs/python/python.exe。
     python tools/bundle_python.py               # 默认 Windows x86_64
 环境变量覆盖：
     MAAFW_VERSION=5.5.0  PY_VERSION=3.12.10
+
+两种模式（按【当前运行脚本】的系统自动选择）：
+  - Windows 本机模式：解压 embeddable → 引导 pip → pip install → 导入验证。
+  - Linux/macOS 交叉模式（CI ubuntu runner 交叉打包 win 产物时走这里）：
+    Windows 的 python.exe 无法在 Linux 上执行，改为用宿主 pip
+    「download --platform win_amd64」拉取 win 轮子（wheel 即 zip），
+    直接解包进 embeddable 的 Lib/site-packages，并校验关键目录存在。
 """
 from __future__ import annotations
 
@@ -59,7 +66,11 @@ def fetch(url: str) -> bytes:
         return r.read()
 
 
-def ensure_embeddable() -> None:
+def is_windows_host() -> bool:
+    return sys.platform.startswith("win")
+
+
+def ensure_embeddable(with_pip: bool = True) -> None:
     if os.path.exists(MARKER):
         log("便携 Python 已存在，跳过下载/解压。如需重建请删除 deps/agent_python 目录。")
         return
@@ -69,6 +80,8 @@ def ensure_embeddable() -> None:
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         z.extractall(OUT_DIR)
     fix_pth()
+    if not with_pip:
+        return  # 交叉模式不需要在包里引导 pip（运行期用不到）
     get_pip = os.path.join(OUT_DIR, "get-pip.py")
     with open(get_pip, "wb") as f:
         f.write(fetch(GET_PIP_URL))
@@ -131,10 +144,65 @@ def install_deps() -> None:
         f.write(f"python={PY_VERSION} maafw={MAAFW_VERSION} opencv={OPENCV_PKG}\n")
 
 
+def cross_install_deps() -> None:
+    """交叉模式：宿主为 Linux/macOS（如 CI ubuntu runner），目标为 Windows。
+
+    不执行 python.exe，用宿主 pip 下载 win_amd64 轮子后直接解包进 site-packages。
+    wheel 本质是 zip，运行期不需要 pip，因此包内无需引导 pip。
+    """
+    site_dir = os.path.join(OUT_DIR, "Lib", "site-packages")
+    os.makedirs(site_dir, exist_ok=True)
+
+    pkgs = [f"maafw=={MAAFW_VERSION}", OPENCV_PKG]
+    req = os.path.join(REPO_ROOT, "assets", "agent", "requirements.txt")
+    if os.path.exists(req):
+        with open(req, encoding="utf-8") as f:
+            pkgs = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
+
+    wheels_dir = os.path.join(OUT_DIR, "_wheels")
+    os.makedirs(wheels_dir, exist_ok=True)
+    cmd = [sys.executable, "-m", "pip", "download",
+           "--dest", wheels_dir,
+           "--only-binary=:all:",
+           "--platform", "win_amd64",
+           "--python-version", "3.12",
+           "--implementation", "cp",
+           "--abi", "cp312",
+           *pkgs]
+    log(f"宿主 pip 下载 win_amd64 轮子：{' '.join(pkgs)}")
+    subprocess.run(cmd, check=True)
+
+    n = 0
+    for fn in sorted(os.listdir(wheels_dir)):
+        if not fn.endswith(".whl"):
+            continue
+        with zipfile.ZipFile(os.path.join(wheels_dir, fn)) as z:
+            z.extractall(site_dir)
+        log(f"已解包 {fn}")
+        n += 1
+    shutil.rmtree(wheels_dir, ignore_errors=True)
+    if n == 0:
+        raise RuntimeError("未下载到任何 wheel，请检查 pip download 输出")
+
+    # 校验关键包目录存在（无法在 Linux 上 import，只做结构校验）
+    missing = [d for d in ("maa", "cv2") if not os.path.isdir(os.path.join(site_dir, d))]
+    if missing:
+        raise RuntimeError(f"site-packages 缺少关键目录：{missing}")
+    log("交叉模式完成：maa/ 与 cv2/ 均已就位（Windows 侧运行时加载）")
+
+    with open(MARKER, "w", encoding="utf-8") as f:
+        f.write(f"python={PY_VERSION} maafw={MAAFW_VERSION} opencv={OPENCV_PKG} mode=cross\n")
+
+
 def main() -> None:
     os.makedirs(DEPS_DIR, exist_ok=True)
-    ensure_embeddable()
-    install_deps()
+    win_host = is_windows_host()
+    ensure_embeddable(with_pip=win_host)
+    if win_host:
+        install_deps()
+    else:
+        log(f"宿主为 {sys.platform}（非 Windows），走交叉模式")
+        cross_install_deps()
     log(f"完成：便携 Python 位于 {OUT_DIR}")
     log("接着运行  python tools/install.py <版本> win x86_64  即可把这份 Python 打进发布包。")
 
