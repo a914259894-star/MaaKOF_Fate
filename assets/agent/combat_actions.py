@@ -100,8 +100,10 @@ class CombatFighter(CustomAction):
                                        // 点完秘笈后，按此速度连点普攻
         "keep_moving": false,
         "move_dir": [-1, 0],
-        // —— 误点退出（2026-10-22 方案：不再判断 win_text / 主页面兜底） ——
-        "result_interval": 4.0,        // 误点界面识别节流（秒）
+        // —— 误点退出（2026-10-22 方案） ——
+        "result_interval": 4.0,        // 误点/结算识别节流（秒）
+        "result_nodes": ["Fight_Win", "Fight_Lose"],
+                                       // 胜负结算文字节点（失败结算盲点点不掉，必须兜底）
         "wrong_threshold": 0.85,       // 误点界面标题模板阈值（实测交叉最高 0.82）
         "main_threshold": 0.8,         // 竞技场主页面（arena_title）阈值
         "back_xy": [1244, 28],         // 右上角红色返回按钮（至尊赛/排行榜/商城共用）
@@ -110,15 +112,15 @@ class CombatFighter(CustomAction):
         "wrong_max_layers": 12         // 嵌套误点最多连退层数
     }
 
-    退出设计（2026-10-22 重构）：盲点速度快，可能误点进竞技场的子界面且多层嵌套。
+    退出设计（2026-10-22 定稿）：盲点速度快，可能误点进竞技场的子界面且多层嵌套。
     每 result_interval 秒检查一次当前画面：
       ① 玩家详情弹窗 → 点 X 关闭（回排行榜）
       ② 排行榜 / 至尊赛 / 商城 → 点右上返回
       ①②循环处理嵌套（最多 wrong_max_layers 层）；
       ③ 全部未命中且识别到竞技场主页面（arena_title）→ 收手 break，交还流水线进下一轮；
-      ④ 全部未命中且不是主页面 → 还在战斗，继续盲点。
-    不再判断 win/lose 文字：正常结算后盲点会自己点掉结算回到主页面，由 ③ 收口；
-    Fight_Once.next 的 Fight_Win/Fight_Lose（pipeline 层）保留兜底。
+      ④ 无误点且非主页面 → 检查 win/lose 结算文字，命中 break 交还 Fight_Win/Fight_Lose
+        → Arena_SettleOk 点确认（失败结算画面盲点点不掉，v1.1.3 实测卡死 900s 的教训）；
+      ⑤ 都未命中 → 还在战斗，继续盲点。
     """
 
     # 误点界面定义（顺序即检测顺序：玩家详情必须最先——弹窗开着时背景标题仍可见）
@@ -146,6 +148,10 @@ class CombatFighter(CustomAction):
         tap_hold = float(tap_cfg.get("hold_ms", 30)) / 1000
         tap_gap = float(tap_cfg.get("interval_ms", 30)) / 1000
         tap_times = max(1, int(tap_cfg.get("times", 3)))
+        # 胜负结算检测（2026-10-22 晚恢复）：失败结算画面盲点点不掉（确认键不在盲点
+        # 坐标上），必须有 win/lose 兜底 break 交给 Fight_Win/Fight_Lose → Arena_SettleOk。
+        # 误点界面与结算画面互斥，先查误点再查结算，互不干扰。
+        result_nodes = list(param.get("result_nodes", ["Fight_Win", "Fight_Lose"]))
         keep_moving = bool(param.get("keep_moving", False))
         move_dir = param.get("move_dir", [-1, 0])
 
@@ -193,12 +199,16 @@ class CombatFighter(CustomAction):
                     print(f"[CombatFighter] t={now - t0:.0f}s 画面均值={fp:.1f}", flush=True)
 
                 # 误点界面识别（降频）：到达检查时刻才跑。
-                # 命中误点界面 => 循环执行退出（嵌套逐层退），直到回主界面才收手 break；
-                # 都未命中 => 还在战斗，继续盲点。不再判断 win/lose 文字（见类 docstring）。
+                # ① 命中误点界面 => 循环执行退出（嵌套逐层退），直到回主界面才收手 break；
+                # ② 无误点且非主界面 => 检查胜负结算文字（失败结算盲点点不掉，必须兜底）；
+                # ③ 都未命中 => 还在战斗，继续盲点。
                 if img is not None and getattr(img, "size", 0) and now >= next_result_check:
                     next_result_check = now + result_interval
                     gray = self._to_gray_1280(img)
                     if self._escape_misnav(ctrl, gray, param):
+                        break
+                    if self._hit_any(context, img, result_nodes):
+                        print("[CombatFighter] 检测到胜负结算，停止出招", flush=True)
                         break
 
                 # 替身：受击发光才点，其余技能不识别

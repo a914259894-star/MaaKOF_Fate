@@ -30,6 +30,10 @@
                 -1,
                 0
             ],
+            "result_nodes": [
+                "Fight_Win",
+                "Fight_Lose"
+            ],
             "result_interval": 4.0,
             "wrong_threshold": 0.85,
             "main_threshold": 0.8,
