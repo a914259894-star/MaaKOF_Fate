@@ -16,6 +16,19 @@ import sys
 # 故显式把 main.py 所在目录（assets/agent）塞进 path，保证 import register / 同目录模块能找到。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# —— 关键修复：强制 stdout/stderr 为 UTF-8 ——
+# 中文 Windows 下 Python 默认用 GBK 编码 stdout；agent 日志里打印的 ✓/✗/⚠ 等符号
+# 不在 GBK 字符集，会抛 UnicodeEncodeError 并被 maafw 的 ctypes 回调"Exception ignored"吞掉，
+# 导致 CustomAction 中途崩溃（例如只选完第 1 个角色就跳到战斗）。无论宿主如何启动本进程，
+# 都在此处把编码重设为 UTF-8（errors=replace 保证任何字符都不会再炸）。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError, OSError):
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 from maa.agent.agent_server import AgentServer
 from maa.toolkit import Toolkit
 

@@ -107,7 +107,7 @@ class ArenaPick(CustomAction):
             # 一个勾 = 一个角色选上：验证每个目标格是否有勾
             flags = [self._cell_has_check(ctrl, x, y, param) for x, y in targets]
             if all(flags):
-                print(f"[ArenaPick] ✓ 快速选人 3 格全部有勾 {flags}")
+                print(f"[ArenaPick] [OK] 快速选人 3 格全部有勾 {flags}")
                 return True
             # 只对无勾的格子补点；有勾的绝不再点（否则 toggle 掉）
             for (x, y), ok in zip(targets, flags):
@@ -171,7 +171,7 @@ class ArenaPick(CustomAction):
             hit = self._find_role(ctrl, tpl, roi, threshold, tag=name)
             if hit and self._click_until_check(
                     ctrl, hit[0], hit[1], i, param, tag=name):
-                print(f"[ArenaPick] ✓ 已选 {name}")
+                print(f"[ArenaPick] [OK] 已选 {name}")
             else:
                 print(f"[ArenaPick] {name} 未找到/未选上")
                 return False
@@ -275,7 +275,7 @@ class ArenaPick(CustomAction):
         """
         tpl = cls._load_rel("slots/slot_checked")
         if tpl is None:
-            print("[ArenaPick] ⚠ 缺少 slots/slot_checked.png，无法做勾判定", flush=True)
+            print("[ArenaPick] [!] 缺少 slots/slot_checked.png，无法做勾判定", flush=True)
             return False
         gray = cls._grab_1280(ctrl)
         if gray is None:
@@ -296,7 +296,7 @@ class ArenaPick(CustomAction):
         score = cv2.matchTemplate(bw, tpl, cv2.TM_CCOEFF_NORMED)
         ms = float(score.max())
         if ms >= th:
-            print(f"[ArenaPick] 勾判定 ✓ {ms:.2f} @({int(cx)},{int(cy)})")
+            print(f"[ArenaPick] 勾判定 [OK] {ms:.2f} @({int(cx)},{int(cy)})")
             return True
         return False
 
@@ -310,7 +310,7 @@ class ArenaPick(CustomAction):
         若点击前该格已有勾（重复运行等），直接认定已选上、不再点击。
         """
         if cls._cell_has_check(ctrl, x, y, param):
-            print(f"[ArenaPick] ✓ {tag} {idx}号位已有勾（免点）")
+            print(f"[ArenaPick] [OK] {tag} {idx}号位已有勾（免点）")
             return True
         max_clicks = max(1, int(param.get("click_max_tries", 3)))
         miss_need = max(1, int(param.get("miss_confirm", 2)))
@@ -325,13 +325,13 @@ class ArenaPick(CustomAction):
             deadline = time.time() + timeout
             while time.time() < deadline:
                 if cls._cell_has_check(ctrl, x, y, param):
-                    print(f"[ArenaPick] ✓ {tag} {idx}号位已选上（共点 {attempt + 1} 次）")
+                    print(f"[ArenaPick] [OK] {tag} {idx}号位已选上（共点 {attempt + 1} 次）")
                     return True
                 miss += 1
                 if miss >= miss_need:
                     break
                 time.sleep(0.5)
-        print(f"[ArenaPick] ✗ {tag}: 点了 {max_clicks} 次仍无勾（勾判定异常或页面不对）")
+        print(f"[ArenaPick] [X] {tag}: 点了 {max_clicks} 次仍无勾（勾判定异常或页面不对）")
         return False
 
     @staticmethod
