@@ -51,7 +51,8 @@
         "next": [
             "Fight_Win",
             "Fight_Lose",
-            "Arena_MainPage"
+            "Arena_MainPage",
+            "Arena_UnknownBack"
         ]
     },
     "Fight_Loop": {

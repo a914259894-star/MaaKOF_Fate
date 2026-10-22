@@ -327,10 +327,26 @@ class CombatFighter(CustomAction):
             hit = cls._detect_wrong(gray, wrong_th)
             if hit is None:
                 if cls._main_page_hit(gray, main_th):
+                    # 二次确认：break 与 pipeline 接管之间有 3s+ 空窗，且盲点 burst 的
+                    # 残留点击可能此刻才被宿主执行、落在刚出现的主界面上（v1.1.6 实测
+                    # 点进装备页 → pipeline 识别不到主界面 → NextList.Failed 死循环卡死）。
+                    # 等 2s 让残留点击执行完、转场动画结束，再复核一次。
                     if layer > 0:
                         print("[CombatFighter] 误点界面已全部退出", flush=True)
-                    print("[CombatFighter] 检测到竞技场主界面（已离开战斗），停止出招进下一轮", flush=True)
-                    return True
+                    print("[CombatFighter] 检测到竞技场主界面，等待 2s 复核（防残留点击/转场误判）", flush=True)
+                    time.sleep(2.0)
+                    if not _shot(ctrl):
+                        return False
+                    img2 = ctrl.cached_image
+                    if img2 is None:
+                        return False
+                    if cls._main_page_hit(cls._to_gray_1280(img2), main_th):
+                        print("[CombatFighter] 复核通过（已离开战斗），停止出招进下一轮", flush=True)
+                        return True
+                    # 复核失败：画面被残留点击切走（如装备页），继续循环当误点处理
+                    print("[CombatFighter] 复核失败（画面已被切走），继续处理", flush=True)
+                    gray = cls._to_gray_1280(img2)
+                    continue
                 return False
             name, act = hit
             x, y = close_xy if act == "close" else back_xy
