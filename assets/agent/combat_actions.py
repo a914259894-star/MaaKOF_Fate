@@ -13,10 +13,15 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import time
+
+import cv2
 
 from maa.context import Context
 from maa.custom_action import CustomAction
+
+from arena_actions import _ARENA_DIR  # .../resource/image/arena（复用路径定位）
 
 # ================== 战斗 UI 固定坐标（1280x720 基准，MFATools 实测 2026-09） ==================
 JOYSTICK = (167, 531)        # 摇杆中心
@@ -91,22 +96,40 @@ class CombatFighter(CustomAction):
         "skill_cycle": ["skill1", "skill2", "skill3", "ult", "secret"],
                                        // 每轮按此顺序快速盲点（BUTTONS 键名）
         "skill_tap": {"hold_ms": 30, "interval_ms": 30},
-        "result_nodes": ["Fight_Win", "Fight_Lose"],
         "normal_tap": {"hold_ms": 30, "interval_ms": 30, "times": 3},
                                        // 点完秘笈后，按此速度连点普攻
         "keep_moving": false,
         "move_dir": [-1, 0],
-        // —— 退出信号 ——
-        "result_interval": 4.0,        // 胜负/主页面识别节流（秒）
-        "arena_main_nodes": ["Arena_MainPage"]
-                                       // 竞技场主页面识别节点（arena_title 模板，战斗中绝不出现）：
-                                       // 识别到 = 已离开战斗，立即收手，由 Arena_LeaveSettle 进下一轮
+        // —— 误点退出（2026-10-22 方案：不再判断 win_text / 主页面兜底） ——
+        "result_interval": 4.0,        // 误点界面识别节流（秒）
+        "wrong_threshold": 0.85,       // 误点界面标题模板阈值（实测交叉最高 0.82）
+        "main_threshold": 0.8,         // 竞技场主页面（arena_title）阈值
+        "back_xy": [1244, 28],         // 右上角红色返回按钮（至尊赛/排行榜/商城共用）
+        "user_close_xy": [843, 109],   // 玩家详情弹窗 X 关闭
+        "wrong_settle_ms": 1200,       // 每次退出点击后的等待
+        "wrong_max_layers": 12         // 嵌套误点最多连退层数
     }
 
-    退出设计：每轮盲点之前按 result_interval 节流检查 ①胜负文字（正常结算）②竞技场主页面
-    （兜底：无论因何种原因回到主页面——正常结算走完或结算被误点提前退掉——立即 break
-    交还流水线，盲点节奏不受影响）。
+    退出设计（2026-10-22 重构）：盲点速度快，可能误点进竞技场的子界面且多层嵌套。
+    每 result_interval 秒检查一次当前画面：
+      ① 玩家详情弹窗 → 点 X 关闭（回排行榜）
+      ② 排行榜 / 至尊赛 / 商城 → 点右上返回
+      ①②循环处理嵌套（最多 wrong_max_layers 层）；
+      ③ 全部未命中且识别到竞技场主页面（arena_title）→ 收手 break，交还流水线进下一轮；
+      ④ 全部未命中且不是主页面 → 还在战斗，继续盲点。
+    不再判断 win/lose 文字：正常结算后盲点会自己点掉结算回到主页面，由 ③ 收口；
+    Fight_Once.next 的 Fight_Win/Fight_Lose（pipeline 层）保留兜底。
     """
+
+    # 误点界面定义（顺序即检测顺序：玩家详情必须最先——弹窗开着时背景标题仍可见）
+    _WRONG_DEFS = [
+        # (名称, 模板相对 _ARENA_DIR, roi(x,y,w,h), 退出动作)
+        ("玩家详情", "wrong/wrong_user",   (350, 50, 620, 160), "close"),
+        ("排行榜",   "wrong/wrong_rank",   (0, 0, 340, 110),   "back"),
+        ("至尊赛",   "wrong/wrong_zhizun", (0, 0, 340, 110),   "back"),
+        ("商城",     "wrong/wrong_shop",   (0, 0, 340, 110),   "back"),
+    ]
+    _TPL_CACHE: dict[str, "cv2.Mat"] = {}
 
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
         param = json.loads(argv.custom_action_param) if argv.custom_action_param else {}
@@ -119,10 +142,6 @@ class CombatFighter(CustomAction):
         st = param.get("skill_tap", {})
         skill_hold = int(st.get("hold_ms", 30))
         skill_gap = float(st.get("interval_ms", 30)) / 1000
-        result_nodes = list(param.get("result_nodes", ["Fight_Win", "Fight_Lose"]))
-        # 兜底退出信号：竞技场主页面（arena_title 横幅）。战斗/结算画面绝不会出现；
-        # 一旦识别到 = 已离开战斗（正常结算走完 或 结算被误点提前退掉），立即收手进下一轮。
-        main_nodes = list(param.get("arena_main_nodes", ["Arena_MainPage"]))
         tap_cfg = param.get("normal_tap", {})
         tap_hold = float(tap_cfg.get("hold_ms", 30)) / 1000
         tap_gap = float(tap_cfg.get("interval_ms", 30)) / 1000
@@ -173,17 +192,13 @@ class CombatFighter(CustomAction):
                         fp = -1.0
                     print(f"[CombatFighter] t={now - t0:.0f}s 画面均值={fp:.1f}", flush=True)
 
-                # 结算识别（降频）：到达检查时刻才跑。
-                # ① 命中胜负文字 => 正常结算，交还 Fight_Win/Fight_Lose 流程；
-                # ② 命中竞技场主页面 => 已离开战斗（含结算被误点提前退掉的兜底），立即收手，
-                #    由 Fight_Once.next 的 Arena_LeaveSettle（反向识别，主页面必命中）进下一轮。
+                # 误点界面识别（降频）：到达检查时刻才跑。
+                # 命中误点界面 => 循环执行退出（嵌套逐层退），直到回主界面才收手 break；
+                # 都未命中 => 还在战斗，继续盲点。不再判断 win/lose 文字（见类 docstring）。
                 if img is not None and getattr(img, "size", 0) and now >= next_result_check:
                     next_result_check = now + result_interval
-                    if self._hit_any(context, img, result_nodes):
-                        print("[CombatFighter] 检测到胜负结算，停止出招", flush=True)
-                        break
-                    if self._hit_any(context, img, main_nodes):
-                        print("[CombatFighter] 检测到竞技场主页面（已离开战斗），停止出招进下一轮", flush=True)
+                    gray = self._to_gray_1280(img)
+                    if self._escape_misnav(ctrl, gray, param):
                         break
 
                 # 替身：受击发光才点，其余技能不识别
@@ -218,6 +233,107 @@ class CombatFighter(CustomAction):
             print("[CombatFighter] 结束", flush=True)
 
         return True
+
+    # ================== 误点界面检测与退出（2026-10-22） ==================
+
+    @staticmethod
+    def _to_gray_1280(img):
+        """cached_image -> 宽 1280 的灰度图（坐标/模板统一 1280 基准）。"""
+        if img.ndim == 3:
+            g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        else:
+            g = img
+        if g.shape[1] != 1280:
+            sc = g.shape[1] / 1280.0
+            g = cv2.resize(g, (1280, int(g.shape[0] / sc)), interpolation=cv2.INTER_AREA)
+        return g
+
+    @classmethod
+    def _load_tpl(cls, rel: str):
+        """加载 arena 目录下灰度模板（带缓存），失败返回 None。"""
+        if rel not in cls._TPL_CACHE:
+            path = os.path.join(_ARENA_DIR, *rel.split("/")) + ".png"
+            tpl = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+            if tpl is None:
+                print(f"[CombatFighter] 缺少模板 {rel}.png", flush=True)
+                cls._TPL_CACHE[rel] = None
+            else:
+                cls._TPL_CACHE[rel] = tpl
+        return cls._TPL_CACHE[rel]
+
+    @staticmethod
+    def _match_score(gray, tpl, roi) -> float:
+        """在 gray 的 roi(x,y,w,h) 内匹配模板，返回最高分（ROI 过小返回 -1）。"""
+        x, y, w, h = roi
+        H, W = gray.shape[:2]
+        patch = gray[max(0, y):min(H, y + h), max(0, x):min(W, x + w)]
+        th, tw = tpl.shape[:2]
+        if patch.shape[0] < th or patch.shape[1] < tw:
+            return -1.0
+        return float(cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED).max())
+
+    @classmethod
+    def _detect_wrong(cls, gray, threshold: float):
+        """检测当前是否处于误点界面，返回 (名称, 动作) 或 None。
+
+        顺序固定：玩家详情最先（弹窗开着时背景的排行榜标题仍然可见，
+        若先查排行榜会在弹窗帧上以背景分数命中）。
+        """
+        for name, rel, roi, act in cls._WRONG_DEFS:
+            tpl = cls._load_tpl(rel)
+            if tpl is None:
+                continue
+            score = cls._match_score(gray, tpl, roi)
+            if score >= threshold:
+                print(f"[CombatFighter] 误点识别「{name}」score={score:.3f}", flush=True)
+                return name, act
+        return None
+
+    @classmethod
+    def _main_page_hit(cls, gray, threshold: float) -> bool:
+        """竞技场主页面判定（arena_title 横幅，全屏匹配）。"""
+        tpl = cls._load_tpl("arena_title")
+        if tpl is None:
+            return False
+        return cls._match_score(gray, tpl, (0, 0, gray.shape[1], gray.shape[0])) >= threshold
+
+    @classmethod
+    def _escape_misnav(cls, ctrl, gray, param) -> bool:
+        """处理误点嵌套：逐层退出直到回到竞技场主界面。
+
+        返回 True = 已回主界面（调用方 break 进下一轮）；
+        返回 False = 不在误点界面且不是主界面（还在战斗，继续盲点）。
+        """
+        wrong_th = float(param.get("wrong_threshold", 0.85))
+        main_th = float(param.get("main_threshold", 0.8))
+        settle = float(param.get("wrong_settle_ms", 1200)) / 1000
+        max_layers = max(1, int(param.get("wrong_max_layers", 12)))
+        back_xy = param.get("back_xy", [1244, 28])
+        close_xy = param.get("user_close_xy", [843, 109])
+
+        for layer in range(max_layers):
+            hit = cls._detect_wrong(gray, wrong_th)
+            if hit is None:
+                if cls._main_page_hit(gray, main_th):
+                    if layer > 0:
+                        print("[CombatFighter] 误点界面已全部退出", flush=True)
+                    print("[CombatFighter] 检测到竞技场主界面（已离开战斗），停止出招进下一轮", flush=True)
+                    return True
+                return False
+            name, act = hit
+            x, y = close_xy if act == "close" else back_xy
+            verb = "点关闭(X)" if act == "close" else "点返回"
+            print(f"[CombatFighter] 误点进入「{name}」（第 {layer + 1} 层），{verb} ({x},{y})", flush=True)
+            ctrl.post_click(int(x), int(y))
+            time.sleep(settle)
+            if not _shot(ctrl):
+                return False
+            img = ctrl.cached_image
+            if img is None:
+                return False
+            gray = cls._to_gray_1280(img)
+        print(f"[CombatFighter] 连退 {max_layers} 层仍未回主界面，放弃（防死循环），继续观察", flush=True)
+        return False
 
     @staticmethod
     def _hit_any(context: Context, img, nodes: list[str]) -> bool:

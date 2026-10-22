@@ -20,10 +20,6 @@
                 "hold_ms": 30,
                 "interval_ms": 30
             },
-            "result_nodes": [
-                "Fight_Win",
-                "Fight_Lose"
-            ],
             "normal_tap": {
                 "hold_ms": 30,
                 "interval_ms": 30,
@@ -33,7 +29,20 @@
             "move_dir": [
                 -1,
                 0
-            ]
+            ],
+            "result_interval": 4.0,
+            "wrong_threshold": 0.85,
+            "main_threshold": 0.8,
+            "back_xy": [
+                1244,
+                28
+            ],
+            "user_close_xy": [
+                843,
+                109
+            ],
+            "wrong_settle_ms": 1200,
+            "wrong_max_layers": 12
         },
         "timeout": 960000,
         "next": [
