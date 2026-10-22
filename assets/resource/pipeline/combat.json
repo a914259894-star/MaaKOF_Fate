@@ -31,7 +31,6 @@
                 0
             ],
             "result_nodes": [
-                "Fight_Win",
                 "Fight_Lose"
             ],
             "result_interval": 4.0,

@@ -102,8 +102,8 @@ class CombatFighter(CustomAction):
         "move_dir": [-1, 0],
         // —— 误点退出（2026-10-22 方案） ——
         "result_interval": 4.0,        // 误点/结算识别节流（秒）
-        "result_nodes": ["Fight_Win", "Fight_Lose"],
-                                       // 胜负结算文字节点（失败结算盲点点不掉，必须兜底）
+        "result_nodes": ["Fight_Lose"],
+                                       // 只查失败结算文字（胜利结算盲点自点掉，不查 win）
         "wrong_threshold": 0.85,       // 误点界面标题模板阈值（实测交叉最高 0.82）
         "main_threshold": 0.8,         // 竞技场主页面（arena_title）阈值
         "back_xy": [1244, 28],         // 右上角红色返回按钮（至尊赛/排行榜/商城共用）
@@ -118,8 +118,9 @@ class CombatFighter(CustomAction):
       ② 排行榜 / 至尊赛 / 商城 → 点右上返回
       ①②循环处理嵌套（最多 wrong_max_layers 层）；
       ③ 全部未命中且识别到竞技场主页面（arena_title）→ 收手 break，交还流水线进下一轮；
-      ④ 无误点且非主页面 → 检查 win/lose 结算文字，命中 break 交还 Fight_Win/Fight_Lose
-        → Arena_SettleOk 点确认（失败结算画面盲点点不掉，v1.1.3 实测卡死 900s 的教训）；
+      ④ 无误点且非主页面 → 检查失败结算文字（只查 lose），命中 break 交还 Fight_Lose
+        → Arena_SettleOk 点确认（失败结算画面盲点点不掉，v1.1.3 实测卡死 900s 的教训；
+        胜利结算盲点自己会点掉回主界面，不查 win）；
       ⑤ 都未命中 → 还在战斗，继续盲点。
     """
 
@@ -148,10 +149,11 @@ class CombatFighter(CustomAction):
         tap_hold = float(tap_cfg.get("hold_ms", 30)) / 1000
         tap_gap = float(tap_cfg.get("interval_ms", 30)) / 1000
         tap_times = max(1, int(tap_cfg.get("times", 3)))
-        # 胜负结算检测（2026-10-22 晚恢复）：失败结算画面盲点点不掉（确认键不在盲点
-        # 坐标上），必须有 win/lose 兜底 break 交给 Fight_Win/Fight_Lose → Arena_SettleOk。
-        # 误点界面与结算画面互斥，先查误点再查结算，互不干扰。
-        result_nodes = list(param.get("result_nodes", ["Fight_Win", "Fight_Lose"]))
+        # 胜负结算检测（2026-10-22 定稿：只查失败）：失败结算画面盲点点不掉（确认键
+        # 不在盲点坐标上），必须检测兜底 break 交给 Fight_Lose → Arena_SettleOk；
+        # 胜利结算盲点自己会点掉回主界面（由主界面判定收口），不查 win——查询窗口期
+        # 盲点误点结算按钮反而是历史问题源头。
+        result_nodes = list(param.get("result_nodes", ["Fight_Lose"]))
         keep_moving = bool(param.get("keep_moving", False))
         move_dir = param.get("move_dir", [-1, 0])
 
