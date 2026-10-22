@@ -112,6 +112,7 @@
             "pipeline_override": {
                 "Arena_Pick": {
                     "custom_action_param": {
+                        "quick_pick": false,
                         "picks": "{picks}"
                     }
                 }
