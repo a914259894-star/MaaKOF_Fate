@@ -43,7 +43,7 @@ interface.json 的 task 数组里加：
 ```
 
 **接入后必须重启 agent 进程**（arena_actions.py 是新的 .py）：Ctrl+C 杀掉旧的
-`python agent/main.py <id>`，重新拉起，然后网页 Agent 区重新 Connect。
+`python assets/agent/main.py <id>`，重新拉起，然后网页 Agent 区重新 Connect。
 
 ---
 

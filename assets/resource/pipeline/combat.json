@@ -38,7 +38,8 @@
         "timeout": 960000,
         "next": [
             "Fight_Win",
-            "Fight_Lose"
+            "Fight_Lose",
+            "Arena_MainPage"
         ]
     },
     "Fight_Loop": {

@@ -1,7 +1,7 @@
 """入口（嵌入模式，官方文档的"方案三"）—— 官方模板（MaaPracticeBoilerplate）专用版。
 
 与 maa-fighter/main.py 的唯一区别：
-    sys.path 指向 agent/（官方模板的 agent 目录在项目根，不在 assets/ 下）。
+    sys.path 指向 assets/agent/（本工程约定：agent 目录在 assets/ 下，非官方模板的根目录布局）。
 
 用法：
     python main.py                                   # 自动找设备，跑默认入口（Fight_Once）
@@ -27,8 +27,8 @@ import sys
 
 import cv2
 
-# 自定义模块在 agent/ 下（官方模板布局：项目根/agent/）
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "agent"))
+# 自定义模块在 assets/agent/ 下（本工程约定：agent 目录在 assets/ 下）
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "agent"))
 
 from maa.controller import AdbController
 from maa.resource import Resource

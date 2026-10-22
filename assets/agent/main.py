@@ -9,7 +9,12 @@
     - 也可以手动联调：先运行本文件拿 socket_id 参数说明，再用调试器连接。
 """
 
+import os
 import sys
+
+# 便携 Python（embeddable）的 _pth 不会把脚本所在目录加入 sys.path，
+# 故显式把 main.py 所在目录（assets/agent）塞进 path，保证 import register / 同目录模块能找到。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from maa.agent.agent_server import AgentServer
 from maa.toolkit import Toolkit

@@ -129,11 +129,55 @@ def install_chores():
 
 
 def install_agent():
+    # 本工程约定：agent 目录在 assets/agent/ 下（非官方样板的根目录 agent/）
     shutil.copytree(
-        working_dir / "agent",
+        working_dir / "assets" / "agent",
         install_path / "agent",
         dirs_exist_ok=True,
     )
+
+
+def install_agent_runtime():
+    """把便携 Python（含 maafw + opencv）打进发布包，使生成的 exe 自包含。
+
+    - 源：deps/agent_python（由 tools/bundle_python.py 准备，.gitignore 已忽略）
+    - 目标：install/libs/python/，interface.json 的 agent.child_exec 指向 ./libs/python/python.exe
+    - 若源不存在，则尝试自动调用 bundle_python 准备（需要网络）。
+    - 仅 win 平台打包：bundle_python 下载的是 Windows embeddable Python，
+      在 macos/linux CI runner 上必然失败，且非 win 用户机器也跑不了 python.exe。
+    """
+    if os_name != "win":
+        print(f"[install] os={os_name} 非 win，跳过便携 Python 打包（agent 回退用系统 python）")
+        return
+    src = working_dir / "deps" / "agent_python"
+    if not (src / "python.exe").exists():
+        print("[install] 未找到便携 Python（deps/agent_python/python.exe），尝试自动准备 ...")
+        try:
+            import importlib.util
+
+            spec = importlib.util.spec_from_file_location(
+                "bundle_python", str(working_dir / "tools" / "bundle_python.py")
+            )
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            mod.main()
+        except SystemExit:
+            raise
+        except Exception as e:  # noqa: BLE001
+            print(f"[install] 自动准备失败：{e}")
+            print("[install] 请先手动运行：python tools/bundle_python.py")
+            sys.exit(1)
+
+    dst = install_path / "libs" / "python"
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(
+        src,
+        dst,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".bundled_marker"),
+        dirs_exist_ok=True,
+    )
+    print(f"[install] 便携 Python 已打入 {dst}（自包含，用户无需另行安装 Python）")
 
 
 if __name__ == "__main__":
@@ -141,5 +185,6 @@ if __name__ == "__main__":
     install_resource()
     install_chores()
     install_agent()
+    install_agent_runtime()
 
     print(f"Install to {install_path} successfully.")

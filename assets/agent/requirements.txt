@@ -1,0 +1,5 @@
+# AgentServer（Python 自定义动作）运行时依赖
+# 版本须与宿主 MaaFramework 保持一致（本项目 maafw==5.5.0 ↔ MFA v2.5.7 / MaaFramework v5.5.0）
+maafw==5.5.0
+# 无 GUI 依赖的 OpenCV，仅用于模板匹配；比 opencv-python 体积小、不依赖 Qt/GTK 系统库
+opencv-python-headless

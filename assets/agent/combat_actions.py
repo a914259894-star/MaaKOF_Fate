@@ -95,8 +95,17 @@ class CombatFighter(CustomAction):
         "normal_tap": {"hold_ms": 30, "interval_ms": 30, "times": 3},
                                        // 点完秘笈后，按此速度连点普攻
         "keep_moving": false,
-        "move_dir": [-1, 0]
+        "move_dir": [-1, 0],
+        // —— 退出信号 ——
+        "result_interval": 4.0,        // 胜负/主页面识别节流（秒）
+        "arena_main_nodes": ["Arena_MainPage"]
+                                       // 竞技场主页面识别节点（arena_title 模板，战斗中绝不出现）：
+                                       // 识别到 = 已离开战斗，立即收手，由 Arena_LeaveSettle 进下一轮
     }
+
+    退出设计：每轮盲点之前按 result_interval 节流检查 ①胜负文字（正常结算）②竞技场主页面
+    （兜底：无论因何种原因回到主页面——正常结算走完或结算被误点提前退掉——立即 break
+    交还流水线，盲点节奏不受影响）。
     """
 
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
@@ -111,6 +120,9 @@ class CombatFighter(CustomAction):
         skill_hold = int(st.get("hold_ms", 30))
         skill_gap = float(st.get("interval_ms", 30)) / 1000
         result_nodes = list(param.get("result_nodes", ["Fight_Win", "Fight_Lose"]))
+        # 兜底退出信号：竞技场主页面（arena_title 横幅）。战斗/结算画面绝不会出现；
+        # 一旦识别到 = 已离开战斗（正常结算走完 或 结算被误点提前退掉），立即收手进下一轮。
+        main_nodes = list(param.get("arena_main_nodes", ["Arena_MainPage"]))
         tap_cfg = param.get("normal_tap", {})
         tap_hold = float(tap_cfg.get("hold_ms", 30)) / 1000
         tap_gap = float(tap_cfg.get("interval_ms", 30)) / 1000
@@ -121,6 +133,10 @@ class CombatFighter(CustomAction):
         ctrl = context.tasker.controller
         print(f"[CombatFighter] 开始（{duration:.0f}s 上限）", flush=True)
         deadline = time.time() + duration
+        # 结算识别降频：全屏模板识别在慢环境下单次可达 1~2.4s，
+        # 每轮都查会把出招拖成涓流。每 result_interval 秒查一次足够（60s 级别的战斗）。
+        result_interval = float(param.get("result_interval", 4.0))
+        next_result_check = 0.0
 
         # 开打自检：确认画面真的是战斗界面（截图若失败会是旧帧，这里能暴露）
         _shot(ctrl)
@@ -149,7 +165,7 @@ class CombatFighter(CustomAction):
 
                 # 每 10s 打一个画面指纹：数字一直完全不变 => 截图是死的旧帧
                 now = time.time()
-                if img is not None and now - last_report >= 10:
+                if img is not None and getattr(img, "size", 0) and now - last_report >= 10:
                     last_report = now
                     try:
                         fp = float(img.mean())
@@ -157,11 +173,21 @@ class CombatFighter(CustomAction):
                         fp = -1.0
                     print(f"[CombatFighter] t={now - t0:.0f}s 画面均值={fp:.1f}", flush=True)
 
-                if img is not None and self._hit_any(context, img, result_nodes):
-                    break
+                # 结算识别（降频）：到达检查时刻才跑。
+                # ① 命中胜负文字 => 正常结算，交还 Fight_Win/Fight_Lose 流程；
+                # ② 命中竞技场主页面 => 已离开战斗（含结算被误点提前退掉的兜底），立即收手，
+                #    由 Fight_Once.next 的 Arena_LeaveSettle（反向识别，主页面必命中）进下一轮。
+                if img is not None and getattr(img, "size", 0) and now >= next_result_check:
+                    next_result_check = now + result_interval
+                    if self._hit_any(context, img, result_nodes):
+                        print("[CombatFighter] 检测到胜负结算，停止出招", flush=True)
+                        break
+                    if self._hit_any(context, img, main_nodes):
+                        print("[CombatFighter] 检测到竞技场主页面（已离开战斗），停止出招进下一轮", flush=True)
+                        break
 
                 # 替身：受击发光才点，其余技能不识别
-                if img is not None and recog_nodes:
+                if img is not None and getattr(img, "size", 0) and recog_nodes:
                     for node in recog_nodes:
                         if self._hit_any(context, img, [node]):
                             key = self._key_of(node)

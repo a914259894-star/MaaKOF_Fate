@@ -1,4 +1,17 @@
 {
+    "Arena_MainPage": {
+        "recognition": "TemplateMatch",
+        "template": "arena/arena_title.png",
+        "green_mask": false,
+        "threshold": 0.8,
+        "action": "DoNothing",
+        "rate_limit": 1000,
+        "next": [
+            "Arena_WaitBattle",
+            "Arena_Mode_1v1",
+            "Arena_Enter_1v1"
+        ]
+    },
     "Arena_Enter_1v1": {
         "recognition": "TemplateMatch",
         "template": "arena/main_arena_btn.png",
@@ -97,13 +110,13 @@
                     1
                 ],
                 [
-                    1,
                     2,
+                    1,
                     1
                 ],
                 [
-                    1,
                     3,
+                    1,
                     1
                 ]
             ],
@@ -115,6 +128,7 @@
             ],
             "threshold": 0.72,
             "max_drags": 2,
+            "last_drags": 10,
             "swipe": {
                 "from": [
                     829,
@@ -131,22 +145,12 @@
                 622,
                 638
             ],
-            "slots": [
-                [
-                    39,
-                    668
-                ],
-                [
-                    108,
-                    668
-                ],
-                [
-                    177,
-                    668
-                ]
-            ],
-            "slot_r": 20,
-            "slot_sat": 60
+            "check_half": 60,
+            "check_threshold": 0.7,
+            "check_bright": 190,
+            "click_max_tries": 3,
+            "miss_confirm": 2,
+            "check_timeout": 5
         },
         "timeout": 300000,
         "next": [
