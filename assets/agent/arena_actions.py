@@ -74,7 +74,10 @@ class ArenaPick(CustomAction):
         "last_drags": 10,                // 自动判定为最后一页时，从右往左拖此次数（确保停在最右端拖不动）
         // 页面由 picks 栏位自动判定，支持混页：栏≤3 归第一页(不拖)、栏≥8 归最后一页(拖到尽头)、栏4~7 按比例拖；
         // 按「第一页→中间→最后一页」顺序逐页前进选人，全程只向右拖、不回拖。
-        "swipe": {"from": [829, 230], "to": [433, 230], "ms": 1200, "settle_ms": 800},
+        "swipe": {"from": [829, 230], "to": [433, 230], "ms": 600, "settle_ms": 500},
+        // 翻页提速：1200/800 时代 10 次拖页约 20s，会与选人倒计时竞速——
+        // 倒计时归零游戏自动锁定阵容并跳到「确定出手顺序」页，剩余拖页
+        // 全落在顺序页上，随后找不到角色 → 整个任务失败（2026-10-23 现场）。
         "confirm": [622, 638],
         // —— 勾判定参数 ——
         "check_half": 60,        // 勾搜索半径：以被点格子中心为圆心取 (2*half)^2 窗口（格子约 105px）
@@ -82,7 +85,15 @@ class ArenaPick(CustomAction):
         "check_bright": 190,     // 白勾二值化亮度线
         "click_max_tries": 3,    // 单个角色最多点击次数（勾一直不出现时）
         "miss_confirm": 2,       // 连续 N 次检测无勾才认定未选上并补点（防检测抖动把已选角色 toggle 掉）
-        "check_timeout": 5       // 每次点击后等待勾出现的秒数
+        "check_timeout": 5,      // 每次点击后等待勾出现的秒数
+        // —— 找不到角色 / 兜底 ——
+        "find_retries": 3,       // 模板未命中时重试截图次数（转场/截图抖动容错）
+        "find_retry_gap": 0.8,   // 重试间隔秒
+        // 「确定出手顺序」页兜底：选人中途倒计时归零游戏会自动锁定阵容并
+        // 跳到该页（不会等你点确定），此时选人已由游戏接管——检测到该页
+        // 直接放行让 pipeline 走 WaitBattle，不再因找不到角色而整任务失败。
+        "order_threshold": 0.85, // order_confirm.png 匹配阈值（正例 0.999 / 反例 ≤0.67）
+        "order_roi": [0, 0, 1280, 160]
     }
     """
 
@@ -97,10 +108,47 @@ class ArenaPick(CustomAction):
         else:
             ok = self._roster(ctrl, param)
         if not ok:
+            # 找不到角色/没选上：优先判断是否已被游戏接管（跳到顺序页）
+            if self._order_screen(ctrl, param):
+                print("[ArenaPick] 检测到「确定出手顺序」页（倒计时归零游戏已自动锁定阵容），"
+                      "跳过选人放行继续", flush=True)
+                return True
             return False
+        if self._order_screen(ctrl, param):
+            # 极端情况：选人逻辑走完但期间游戏已自动锁定跳页，确定键不能再点
+            print("[ArenaPick] 确定前检测到「确定出手顺序」页（游戏已自动锁定），跳过点确定", flush=True)
+            return True
         time.sleep(0.4)
         ctrl.post_click(*confirm_xy)  # 发完就走，不等回执（慢环境防阻塞）
         return True
+
+    @classmethod
+    def _order_screen(cls, ctrl, param) -> bool:
+        """当前画面是否为「点击格斗家确定顺序」页。
+
+        选人倒计时归零时游戏自动锁定阵容并跳到该页（2026-10-23 现场：
+        剩余翻页落在顺序页上、随后 c8r2k2 找不到 → Arena_Pick ret=false
+        → 整任务停止）。模板为页顶橙色标题文字，正例 0.999、
+        选人格子页/主页面等反例 ≤0.67，0.85 余量充足。
+        """
+        tpl = cls._load_rel("order_confirm")
+        if tpl is None:
+            return False
+        gray = cls._grab_1280(ctrl)
+        if gray is None:
+            return False
+        H, W = gray.shape[:2]
+        rx, ry, rw, rh = param.get("order_roi", [0, 0, 1280, 160])
+        patch = gray[max(0, ry):min(H, ry + rh), max(0, rx):min(W, rx + rw)]
+        if patch.shape[0] < tpl.shape[0] or patch.shape[1] < tpl.shape[1]:
+            return False
+        score = cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED)
+        ms = float(score.max())
+        th = float(param.get("order_threshold", 0.85))
+        if ms >= th:
+            print(f"[ArenaPick] 顺序页判定 [OK] {ms:.3f} ≥ {th}", flush=True)
+            return True
+        return False
 
     def _quick(self, ctrl, param) -> bool:
         targets = param.get("quick_targets", [[94, 98], [94, 206], [94, 315]])
@@ -142,7 +190,7 @@ class ArenaPick(CustomAction):
         roi = param.get("roi", [0, 0, 1280, 370])
         threshold = float(param.get("threshold", 0.72))
         swipe = param.get("swipe", {"from": [829, 230], "to": [433, 230],
-                                    "ms": 1200, "settle_ms": 800})
+                                    "ms": 600, "settle_ms": 500})
         last_drags = int(param.get("last_drags", 10))
 
         # —— 页面自动判定（不再依赖独立「选人页面」选项），并支持混页 ——
@@ -180,7 +228,9 @@ class ArenaPick(CustomAction):
             if tpl is None:
                 print(f"[ArenaPick] 找不到模板 roles/{name}.png")
                 return False
-            hit = self._find_role(ctrl, tpl, roi, threshold, tag=name)
+            hit = self._find_role(ctrl, tpl, roi, threshold, tag=name,
+                                  retries=param.get("find_retries", 3),
+                                  retry_gap=float(param.get("find_retry_gap", 0.8)))
             if hit and self._click_until_check(
                     ctrl, hit[0], hit[1], i, param, tag=name):
                 print(f"[ArenaPick] [OK] 已选 {name}")
@@ -253,27 +303,37 @@ class ArenaPick(CustomAction):
         return img
 
     @classmethod
-    def _find_role(cls, ctrl, tpl, roi, threshold, tag=""):
-        gray = cls._grab_1280(ctrl)
-        if gray is None:
-            return None
-        rx, ry, rw, rh = roi
-        H, W = gray.shape[:2]
-        patch = gray[max(0, ry):min(H, ry + rh), max(0, rx):min(W, rx + rw)]
-        th, tw = tpl.shape[:2]
-        if patch.shape[0] < th or patch.shape[1] < tw:
-            return None
-        score = cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED)
-        _, maxv, _, maxloc = cv2.minMaxLoc(score)
-        if maxv < threshold:
+    def _find_role(cls, ctrl, tpl, roi, threshold, tag="",
+                   retries: int = 3, retry_gap: float = 0.8):
+        """模板找角色；未命中时重试截图几次（转场/截图抖动容错）。"""
+        retries = max(1, int(retries))
+        hit = None
+        for attempt in range(retries):
+            gray = cls._grab_1280(ctrl)
+            if gray is None:
+                time.sleep(retry_gap)
+                continue
+            rx, ry, rw, rh = roi
+            H, W = gray.shape[:2]
+            patch = gray[max(0, ry):min(H, ry + rh), max(0, rx):min(W, rx + rw)]
+            th, tw = tpl.shape[:2]
+            if patch.shape[0] < th or patch.shape[1] < tw:
+                time.sleep(retry_gap)
+                continue
+            score = cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED)
+            _, maxv, _, maxloc = cv2.minMaxLoc(score)
+            if maxv >= threshold:
+                cx = max(0, rx) + maxloc[0] + tw // 2
+                cy = max(0, ry) + maxloc[1] + th // 2
+                if tag:
+                    print(f"[ArenaPick] {tag}: 命中 {maxv:.3f} @ ({cx},{cy})"
+                          + (f"（第 {attempt + 1} 次截图）" if attempt else ""))
+                return (cx, cy)
             if tag:
-                print(f"[ArenaPick] {tag}: 未命中 {maxv:.3f} / {threshold}")
-            return None
-        cx = max(0, rx) + maxloc[0] + tw // 2
-        cy = max(0, ry) + maxloc[1] + th // 2
-        if tag:
-            print(f"[ArenaPick] {tag}: 命中 {maxv:.3f} @ ({cx},{cy})")
-        return (cx, cy)
+                print(f"[ArenaPick] {tag}: 未命中 {maxv:.3f} / {threshold}"
+                      + (f"，重试 {attempt + 1}/{retries - 1}" if attempt < retries - 1 else ""))
+            time.sleep(retry_gap)
+        return None
 
     @classmethod
     def _cell_has_check(cls, ctrl, cx, cy, param) -> bool:
@@ -349,8 +409,8 @@ class ArenaPick(CustomAction):
     @staticmethod
     def _do_swipe(ctrl, swipe: dict) -> None:
         f, t = swipe["from"], swipe["to"]
-        ms = int(swipe.get("ms", 1200))
-        settle = int(swipe.get("settle_ms", 800))
+        ms = int(swipe.get("ms", 600))
+        settle = int(swipe.get("settle_ms", 500))
         if hasattr(ctrl, "post_swipe"):
             ctrl.post_swipe(int(f[0]), int(f[1]), int(t[0]), int(t[1]), ms).wait()
         else:

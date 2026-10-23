@@ -158,8 +158,8 @@
                     433,
                     230
                 ],
-                "ms": 1200,
-                "settle_ms": 800
+                "ms": 600,
+                "settle_ms": 500
             },
             "confirm": [
                 622,
@@ -170,7 +170,16 @@
             "check_bright": 190,
             "click_max_tries": 3,
             "miss_confirm": 2,
-            "check_timeout": 5
+            "check_timeout": 5,
+            "find_retries": 3,
+            "find_retry_gap": 0.8,
+            "order_threshold": 0.85,
+            "order_roi": [
+                0,
+                0,
+                1280,
+                160
+            ]
         },
         "timeout": 300000,
         "next": [
