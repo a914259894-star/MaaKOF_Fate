@@ -295,6 +295,8 @@
                 [674, 640]
             ],
             "click_dy": 42,
+            "card": "master_card_ssr",
+            "card_threshold": 0.85,
             "badge": "master_team_check",
             "badge_half": 40,
             "badge_threshold": 0.7,
@@ -302,7 +304,7 @@
             "team_size": 0,
             "mark_timeout": 1.6,
             "mark_poll": 0.15,
-            "max_drags": 3,
+            "max_drags": 0,
             "swipe": {
                 "from": [740, 640],
                 "to": [140, 640],

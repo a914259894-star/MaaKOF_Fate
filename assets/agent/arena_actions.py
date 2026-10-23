@@ -1061,31 +1061,33 @@ class MasterTeamFix(CustomAction):
       这一页没有任何能跳走的入口（点了也在本页），所以「误点跑飞」不用担心，
       只要把人补回来即可。
 
-    修复规则（用户要求）：
-      底部角色行每个卡位正中都有一个白色圆形勾（= 已上阵）：
-        1. 从最左开始找第一个「没有这个勾」的卡位 → 点它 → 勾出现即补上；
-        2. 可见卡位全都有勾时，从右往左拖一下角色行（看后面还有没有没上阵的），
-           拖到底（画面纹丝不动）就收手；
-        3. 点了却没出勾（比如已经满员）→ 记下该卡位，180s 内不再点它，
-           转去试别的未上阵卡位；都试完就收手，不瞎点。
+    修复规则（用户 2026-10-23 19:51 现场修正）：
+      底部角色行是**角色列表**，白勾只表示「这个角色在上阵队伍里」——
+      有角色却没勾是正常状态，不能当成「人掉了」。真正掉人的标志是**卡位空了**
+      （那张角色卡整个消失），也就是用户说的「右下角那个位子空了」。
+        1. 先看卡位里还有没有角色卡（卡片左上角的 SSR 标签，实测有卡 0.92~1.00 /
+           空白 0.20~0.65 → 阈值 0.85）：5 个卡位都有卡 = 人数没缺 = **什么都不点**；
+        2. 只有出现空卡位才点它补人，点了没反应就把这个位置记下来，180s 内不再点；
+        3. 默认不拖动角色行（`max_drags=0`），要翻页找角色时才打开。
 
-    判定实测（1146x645 现场截图 → 1280 基准换算）：
-      已上阵卡位 0.93~1.00，未上阵卡位 0.22 → 阈值 0.70 分离干净。
+    判定实测（2026.10.23 19:05 现场帧 → 1280 基准换算）：
+      上阵勾 0.92~0.99 / 未上阵卡位 0.20；角色卡 SSR 标签 0.92~1.00 / 空白 0.20~0.65。
       卡位（勾中心）：x=126,263,400,537,674（间距 137），y=640。
 
     custom_action_param（见 arena.json 的 Arena_TeamFix，全部可省略）：
     {
         "slots": [[126,640],[262,640],[400,640],[537,640],[674,640]],
         "click_dy": 42,        // 点击点 = 卡位中心 +(0,42)，避开正中的勾（勾半径 22）
-        "badge": "master_team_check",
-        "badge_half": 40,      // 在卡位中心 ±40 的窗口里找勾
+        "card": "master_card_ssr",       // 卡位里有角色卡的判据（SSR 标签）
+        "card_threshold": 0.85,
+        "badge": "master_team_check",    // 只用来打日志，不参与决策
+        "badge_half": 40,
         "badge_threshold": 0.70,
         "max_add": 5,          // 一轮最多补几个（防意外连点）
-        "team_size": 0,        // 0=不限；填当前正确的上阵人数（截图里是 4）后，
-                               // 已够数就直接跳过（防止队伍满了还每局去点一个不会变勾的卡位）
-        "mark_timeout": 1.6,   // 点完等勾出现的秒数
+        "team_size": 0,        // 0=不限；>0 且勾数已达该值就直接跳过
+        "mark_timeout": 1.6,   // 点完等角色卡出现的秒数
         "mark_poll": 0.15,
-        "max_drags": 3,        // 最多拖几次角色行
+        "max_drags": 0,        // 默认不拖；>0 时卡位都有人才右→左翻页
         "swipe": {"from":[740,640], "to":[140,640], "ms":350, "settle_ms":400},
         "page_roi": [380,20,560,90],   // master_title（大师竞技横幅）位置，用于页面守卫
         "page_threshold": 0.85
@@ -1102,11 +1104,12 @@ class MasterTeamFix(CustomAction):
         click_dy = int(param.get("click_dy", 42))
         half = int(param.get("badge_half", 40))
         badge_th = float(param.get("badge_threshold", 0.70))
+        card_th = float(param.get("card_threshold", 0.85))
         max_add = max(1, int(param.get("max_add", 5)))
         team_size = int(param.get("team_size", 0))
         mark_timeout = float(param.get("mark_timeout", 1.6))
         mark_poll = float(param.get("mark_poll", 0.15))
-        max_drags = max(0, int(param.get("max_drags", 3)))
+        max_drags = max(0, int(param.get("max_drags", 0)))
         swipe = param.get("swipe", {"from": [740, 640], "to": [140, 640],
                                     "ms": 350, "settle_ms": 400})
         page_roi = tuple(int(v) for v in param.get("page_roi", [380, 20, 560, 90]))
@@ -1114,9 +1117,12 @@ class MasterTeamFix(CustomAction):
 
         badge = imread_cn(os.path.join(_ARENA_DIR, param.get("badge", "master_team_check") + ".png"),
                           cv2.IMREAD_GRAYSCALE)
+        card = imread_cn(os.path.join(_ARENA_DIR, param.get("card", "master_card_ssr") + ".png"),
+                         cv2.IMREAD_GRAYSCALE)
         title = imread_cn(os.path.join(_ARENA_DIR, "master_title.png"), cv2.IMREAD_GRAYSCALE)
-        if badge is None or title is None:
-            print("[TeamFix] 缺少模板（master_team_check / master_title），跳过修复", flush=True)
+        if badge is None or title is None or card is None:
+            print("[TeamFix] 缺少模板（master_team_check / master_card_ssr / master_title），跳过修复",
+                  flush=True)
             return True
 
         img = self._grab(ctrl)
@@ -1127,9 +1133,16 @@ class MasterTeamFix(CustomAction):
             print("[TeamFix] 当前不在大师团页，跳过上阵修复", flush=True)
             return True
 
+        # 队伍人数看「卡位里还有没有角色卡」（每张卡左上都有 SSR 标签），
+        # 不看勾 —— 勾只代表这个角色在不在上阵队伍里，本来就有角色是没勾的。
+        filled = [self._has_card(gray, card, s) >= card_th for s in slots]
         done = [self._checked(gray, badge, s, half) >= badge_th for s in slots]
-        print("[TeamFix] 底部角色行上阵状态: " + "".join("O" if d else "-" for d in done)
-              + f"（{sum(done)}/{len(done)}）", flush=True)
+        print("[TeamFix] 底部角色行：角色卡 " + "".join("O" if f else "_" for f in filled)
+              + "  上阵勾 " + "".join("O" if d else "-" for d in done), flush=True)
+
+        if all(filled):
+            print("[TeamFix] 可见卡位都有角色卡（右下角没空），队伍没缺人，不动手", flush=True)
+            return True
 
         if team_size > 0 and sum(done) >= team_size:
             print(f"[TeamFix] 上阵 {sum(done)} 个，已达预设人数 {team_size}，无需修复", flush=True)
@@ -1140,18 +1153,18 @@ class MasterTeamFix(CustomAction):
         while added < max_add:
             if context.tasker.stopping:
                 break
-            blanks = [i for i, d in enumerate(done) if not d]
+            blanks = [i for i, f in enumerate(filled) if not f]
             idx = next((i for i in blanks if not self._is_stuck(slots[i])), None)
             if idx is None:
                 if blanks:
-                    print("[TeamFix] 剩下的未上阵卡位都点过且点不出勾，本轮不再重试", flush=True)
+                    print("[TeamFix] 剩下的空位都点过且没补上，本轮不再重试", flush=True)
                     break
-                # 可见卡位全上阵 → 往右看还有没有没上阵的
+                # 卡位都有人 → 除非显式允许，否则不再拖动
                 if drags >= max_drags:
-                    print("[TeamFix] 可见卡位都已上阵，且已拖到头，结束修复", flush=True)
+                    print("[TeamFix] 可见卡位都已有人，结束修复", flush=True)
                     break
                 drags += 1
-                print(f"[TeamFix] 可见卡位都已上阵，右→左拖动角色行（第 {drags}/{max_drags} 次）",
+                print(f"[TeamFix] 可见卡位都已有人，右→左拖动角色行（第 {drags}/{max_drags} 次）",
                       flush=True)
                 before = cv2.resize(gray, (32, 18), interpolation=cv2.INTER_AREA)
                 ArenaPick._do_swipe(ctrl, swipe)
@@ -1163,25 +1176,26 @@ class MasterTeamFix(CustomAction):
                 if float(cv2.absdiff(before, after).mean()) < 0.8:
                     print("[TeamFix] 角色行拖不动了（已到最右/只有这一页），结束修复", flush=True)
                     break
-                done = [self._checked(gray, badge, s, half) >= badge_th for s in slots]
-                print("[TeamFix] 拖动后上阵状态: " + "".join("O" if d else "-" for d in done),
+                filled = [self._has_card(gray, card, s) >= card_th for s in slots]
+                print("[TeamFix] 拖动后角色卡: " + "".join("O" if f else "_" for f in filled),
                       flush=True)
                 continue
 
             cx, cy = slots[idx]
             px, py = int(cx), int(cy) + click_dy
-            print(f"[TeamFix] 第 {idx + 1} 个卡位没有上阵勾，点击 ({px},{py})", flush=True)
+            print(f"[TeamFix] 第 {idx + 1} 个卡位是空的，点击 ({px},{py})", flush=True)
             ctrl.post_click(px, py).wait()
 
-            if self._wait_badge(ctrl, badge, (cx, cy), half, badge_th, mark_timeout, mark_poll):
+            if self._wait_template(ctrl, card, (cx - 100, cy - 56, 200, 70),
+                                   card_th, mark_timeout, mark_poll):
                 added += 1
-                done[idx] = True
-                print(f"[TeamFix] [OK] 第 {idx + 1} 个卡位已上阵（本轮累计 {added} 个）", flush=True)
+                filled[idx] = True
+                print(f"[TeamFix] [OK] 第 {idx + 1} 个卡位补上角色（本轮累计 {added} 个）", flush=True)
                 continue
 
             # 记下来，一段时间内不再重复点它（匹配重试会反复回到这页）
             self._mark_stuck(slots[idx])
-            print(f"[TeamFix] 第 {idx + 1} 个卡位点了没出勾（可能已满员/不可上阵），"
+            print(f"[TeamFix] 第 {idx + 1} 个空位点了没反应，"
                   f"{int(STUCK_TTL)}s 内不再点它", flush=True)
             continue
 
@@ -1230,6 +1244,30 @@ class MasterTeamFix(CustomAction):
         cx, cy = slot
         roi = (cx - half, cy - half, half * 2, half * 2)
         return cls._score(gray, badge, roi)
+
+    @classmethod
+    def _has_card(cls, gray, card, slot) -> float:
+        """卡位里有没有角色卡：找卡片左上角的 SSR 标签。
+
+        实测（现场帧）：5 个有卡卡位 0.92~1.00，空白区 0.20~0.65 → 阈值 0.85。
+        """
+        cx, cy = slot
+        return cls._score(gray, card, (cx - 100, cy - 56, 200, 70))
+
+    @classmethod
+    def _wait_template(cls, ctrl, tpl, roi, th, timeout, poll) -> bool:
+        """点完之后轮询等模板出现（游戏 UI 有 0.3~0.9s 渲染延迟，不能点完就判）。"""
+        x, y, w, h = roi
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(poll)
+            img = cls._grab(ctrl)
+            if img is None:
+                continue
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            if cls._score(gray, tpl, (x, y, w, h)) >= th:
+                return True
+        return False
 
     @classmethod
     def _wait_badge(cls, ctrl, badge, slot, half, th, timeout, poll) -> bool:
