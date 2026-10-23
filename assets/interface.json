@@ -2,9 +2,9 @@
     "interface_version": 2,
     "name": "MaaKOF_Fate",
     "title": "MaaKOF_Fate 竞技场自动化",
-    "description": "基于 MaaFramework 的格斗手游竞技场自动化：快速选人 → 战斗（技能循环 + 普攻 + 替身识别）→ 结算确认 → 按所选模式自动循环。坐标以 1280x720 为基准，适配 16:9 安卓模拟器（MuMu 2560x1440 实测）。",
-    "version": "1.0.0",
-    "welcome": "# 使用前必读\n\n- 请从游戏**主界面**开始运行（竞技场任务）\n- 模拟器分辨率建议 2560x1440（16:9 均可），输入方式由 MaaFramework 自动选择\n- 「战斗·单场」仅在**已进入战斗画面**时使用，它会立刻开始盲点技能按钮\n- 「竞技场·大师」需要已解锁大师竞技场\n- **已内置便携 Python（含 maafw==5.5.0 + opencv），开箱即用，无需自行安装 Python。**\n- 如需改用本机 Python：把 interface.json 的 `agent.child_exec` 改回 `\"python\"`，并自行 `pip install -r assets/agent/requirements.txt`。",
+    "description": "基于 MaaFramework 的格斗手游竞技场自动化：快速选人 → 战斗（技能循环 + 普攻 + 替身识别）→ 结算确认 → 按所选模式自动循环；支持 1v1 排位与大师竞技场（禁用+选用两阶段选人）。坐标以 1280x720 为基准，适配 16:9 安卓模拟器（MuMu 2560x1440 实测）。",
+    "version": "1.2.0",
+    "welcome": "# 使用前必读\n\n- 请从游戏**主界面**开始运行（竞技场任务）\n- 模拟器分辨率建议 2560x1440（16:9 均可），输入方式由 MaaFramework 自动选择\n- 「战斗·单场」仅在**已进入战斗画面**时使用，它会立刻开始盲点技能按钮\n- 「竞技场·大师」需要已解锁大师竞技场；选人分两阶段（先禁 3 个、再选 3 个），栏位写法与 1v1 相同（栏,行,列），填 000 表示该位放空\n- **已内置便携 Python（含 maafw==5.5.0 + opencv），开箱即用，无需自行安装 Python。**\n- 如需改用本机 Python：把 interface.json 的 `agent.child_exec` 改回 `\"python\"`，并自行 `pip install -r assets/agent/requirements.txt`。",
     "controller": [
         {
             "name": "安卓端",
@@ -43,8 +43,8 @@
             "label": "竞技场·大师 循环",
             "entry": "Arena_Enter_Master",
             "option": [
-                "快速选人",
-                "误点退出延迟"
+                "误点退出延迟",
+                "大师选人栏位"
             ],
             "description": "需要已解锁大师竞技场。大师模式循环：结算后回竞技区自动再进大师场",
             "pipeline_override": {
@@ -185,6 +185,50 @@
                     }
                 }
             }
+        },
+        "大师选人栏位": {
+            "type": "input",
+            "label": "大师竞技场 · 选人栏位",
+            "description": "大师竞技场选人：先禁用 3 个，再选用 3 个。栏位写法与 1v1 相同（栏,行,列），栏 1~10、行/列 1~3；先输入的优先寻找；某段填 000 表示该位放空跳过。程序会用该栏位对应的 1v1 角色模板去大师选人页（6列×3行）扫描，命中就点；扫描不到（该角色不在本页/角色池不同）则从第 1 格开始依次点，直到出现禁用标/勾。",
+            "inputs": [
+                {
+                    "name": "master_ban",
+                    "label": "禁用角色（3 个栏位，如 1,1,1;2,1,1;3,1,1）",
+                    "default": "1,1,1;2,1,1;3,1,1",
+                    "verify": "^(000|(?:[1-9]|10),[1-3],[1-3])(;(?:000|(?:[1-9]|10),[1-3],[1-3])){2}$",
+                    "pattern_msg": "需 3 段，每段形如 栏,行,列（栏1~10，行/列1~3）或 000"
+                },
+                {
+                    "name": "master_pick",
+                    "label": "选用角色（5 个栏位，如 1,1,1;2,1,1;3,1,1;4,1,1;5,1,1）",
+                    "default": "1,1,1;2,1,1;3,1,1;4,1,1;5,1,1",
+                    "verify": "^(000|(?:[1-9]|10),[1-3],[1-3])(;(?:000|(?:[1-9]|10),[1-3],[1-3])){4}$",
+                    "pattern_msg": "需 5 段，每段形如 栏,行,列（栏1~10，行/列1~3）或 000"
+                }
+            ],
+            "pipeline_override": {
+                "Arena_MasterPick": {
+                    "custom_action_param": {
+                        "ban_picks": "{master_ban}",
+                        "pick_picks": "{master_pick}",
+                        "ban_count": 3,
+                        "pick_count": 3,
+                        "role_threshold": 0.62,
+                        "ban_threshold": 0.6,
+                        "check_threshold": 0.55,
+                        "confirm_xy": [
+                            622,
+                            638
+                        ],
+                        "pick_page_timeout": 60,
+                        "confirm_wait": 6,
+                        "click_settle": 0.45,
+                        "confirm_settle": 1.2,
+                        "fallback_max": 15
+                    }
+                }
+            },
+            "default_check": true
         }
     }
 }

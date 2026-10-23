@@ -467,3 +467,375 @@ class ArenaPick(CustomAction):
             ctrl.post_touch_move(int(t[0]), int(t[1]), contact=0).wait()
             ctrl.post_touch_up(contact=0).wait()
         time.sleep(settle / 1000)
+
+
+# ============================================================================
+# 大师竞技场选人（2026-10-23 按现场录屏实现）
+# ============================================================================
+class MasterPick(CustomAction):
+    """大师竞技场选人：先禁用，再选用。
+
+    与 1v1 选人页的差异（录屏 1920x1080 → 1280 基准实测）：
+      - 网格 = 6 列 × 3 行（第 3 行右侧 3 格为空，共 15 个角色），格子 99×99；
+      - 同一页面分两阶段：先是「请先选择禁用的格斗家」（倒计时 20s），
+        再是「温馨提示：请选择格斗家 (x/3)」（倒计时 30s）；
+      - 禁用成功标志 = 格子右下角红色「禁用」印章（ban_stamp.png，红通道二值）；
+      - 选用成功标志 = 格子内白色勾（master_check.png，白掩码二值）；
+      - 顺序确认页无需任何操作（倒计时结束自动进战斗），只作为选人结束的保底判断。
+
+    栏位含义与 1v1 完全一致：(栏, 行, 列) → roles/c{栏}r{行}k{列}.png。
+    扫描 = 用该模板在 15 个格子里找最像的一格；找不到（角色池不同/该角色不在
+    当前页）则走兜底：从第 1 格开始依次点，直到出现禁用标/白勾为止。
+
+    custom_action_param：
+    {
+        "ban_picks":  "1,1,1;2,1,1;3,1,1",   // 3 个禁用栏位，000=放空
+        "pick_picks": "1,1,1;2,1,1;3,1,1;4,1,1;5,1,1",  // 5 个选用栏位
+        "ban_count": 3, "pick_count": 3,
+        "role_threshold": 0.62,   // 扫描命中阈值（跨页角色池不同，不能太高）
+        "ban_threshold": 0.60,    // 禁用标判定
+        "check_threshold": 0.55,  // 白勾判定
+        "confirm_xy": [622, 638], // 「确定」按钮（与 1v1 同位置）
+        "pick_page_timeout": 60,  // 等选人页出现的秒数
+        "confirm_wait": 6         // 点确定前最多等按钮出现的秒数
+    }
+    """
+
+    # 1280 基准网格（从 1920x1080 录屏帧缩放后边缘检测标定）
+    COLS = (90, 202, 313, 478, 590, 701)
+    ROWS = (19, 128, 237)
+    CELL = 99
+    ROLE_SIZE = 78           # 与 roles/*.png 同尺寸
+    # 跨页匹配的多裁剪（1v1 模板是 78×78 的整格头像，大师格 99×99 含边框/星级）
+    _CROPS = (
+        ("full", (0, 99, 0, 99)),
+        ("c83", (8, 91, 8, 91)),
+        ("c73", (13, 86, 13, 86)),
+        ("c66", (16, 82, 16, 82)),
+        ("top", (3, 96, 2, 85)),
+    )
+
+    # ---------------- 主流程 ----------------
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        param = json.loads(argv.custom_action_param) if argv.custom_action_param else {}
+        ctrl = context.tasker.controller
+        print("[MasterPick] ===== 大师竞技场选人开始 =====", flush=True)
+
+        if not self._wait_pick_page(ctrl, param):
+            print("[MasterPick] [X] 等待选人页超时", flush=True)
+            return False
+
+        ok_ban = self._run_phase(ctrl, param, ban=True)
+        ok_pick = self._run_phase(ctrl, param, ban=False)
+
+        if ok_ban and ok_pick:
+            print("[MasterPick] [OK] 禁用与选用均完成", flush=True)
+            return True
+        if self._left_pick_page(ctrl, param):
+            print("[MasterPick] [OK] 已离开选人页（顺序确认/战斗），按完成放行", flush=True)
+            return True
+        print("[MasterPick] [X] 选人未完成，且仍在选人页", flush=True)
+        return False
+
+    def _run_phase(self, ctrl, param, ban: bool) -> bool:
+        tag = "禁用" if ban else "选用"
+        key = "ban_picks" if ban else "pick_picks"
+        need = int(param.get("ban_count" if ban else "pick_count", 3))
+        refs = self._parse_refs(param.get(key), need)
+        print(f"[MasterPick] --- {tag}阶段 目标={refs} 需 {need} 个 ---", flush=True)
+
+        done = 0
+        used = set()
+        for ref in refs:
+            if done >= need:
+                break
+            if ref is None:
+                print(f"[MasterPick] {tag}: 空栏位(000)，跳过", flush=True)
+                continue
+            pos = self._scan_role(ctrl, ref, param, used, ban)
+            if pos is not None and self._click_verify(ctrl, pos, ban, param):
+                used.add(pos)
+                done += 1
+                print(f"[MasterPick] {tag} {done}/{need} [OK] 命中栏位 {ref} -> 格 {pos}", flush=True)
+                continue
+            fb = self._fallback(ctrl, ban, param, used)
+            if fb is not None:
+                used.add(fb)
+                done += 1
+                print(f"[MasterPick] {tag} {done}/{need} [OK] 兜底 -> 格 {fb}", flush=True)
+            else:
+                print(f"[MasterPick] {tag} [!] 兜底未成功（可能阶段已结束）", flush=True)
+
+        self._click_confirm(ctrl, param, tag)
+        print(f"[MasterPick] {tag}阶段结束：完成 {done}/{need}", flush=True)
+        return done >= need
+
+    # ---------------- 扫描 ----------------
+    def _scan_role(self, ctrl, ref, param, used, ban):
+        col, row, k = ref
+        bgr = self._grab_bgr(ctrl)
+        if bgr is None:
+            print(f"[MasterPick] {ref}: 截图为空", flush=True)
+            return None
+        th = float(param.get("role_threshold", 0.62))
+        best = (0.0, None)
+        for kk in self._k_order(int(k)):
+            tpl = self._load_rel(f"roles/c{col}r{row}k{kk}")
+            if tpl is None:
+                continue
+            tpl78 = cv2.resize(tpl, (self.ROLE_SIZE, self.ROLE_SIZE))
+            for ri, ry in enumerate(self.ROWS, 1):
+                for ci, rx in enumerate(self.COLS, 1):
+                    if (ci, ri) in used:
+                        continue
+                    cell = bgr[ry:ry + self.CELL, rx:rx + self.CELL]
+                    if cell.size == 0 or float(cell.mean()) < 25:
+                        continue
+                    if self._cell_taken(cell, ban, param):
+                        continue
+                    gray = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
+                    sc = self._best_crop_score(gray, tpl78)
+                    if sc > best[0]:
+                        best = (sc, (ci, ri))
+        print(f"[MasterPick] 扫描 c{col}r{row}k{k}: 最佳 {best[0]:.3f} @ {best[1]}（阈值 {th}）", flush=True)
+        return best[1] if best[0] >= th else None
+
+    @classmethod
+    def _best_crop_score(cls, gray_cell, tpl78) -> float:
+        best = 0.0
+        h, w = gray_cell.shape[:2]
+        for _, (y0, y1, x0, x1) in cls._CROPS:
+            y0, y1 = max(0, y0), min(h, y1)
+            x0, x1 = max(0, x0), min(w, x1)
+            if y1 - y0 < 8 or x1 - x0 < 8:
+                continue
+            sub = cv2.resize(gray_cell[y0:y1, x0:x1], (cls.ROLE_SIZE, cls.ROLE_SIZE))
+            r = cv2.matchTemplate(sub, tpl78, cv2.TM_CCOEFF_NORMED)
+            _, mx, _, _ = cv2.minMaxLoc(r)
+            if mx > best:
+                best = float(mx)
+        return best
+
+    @staticmethod
+    def _k_order(k: int):
+        order = [k if 1 <= k <= 3 else 1]
+        for v in (1, 2, 3):
+            if v not in order:
+                order.append(v)
+        return order
+
+    # ---------------- 判定 ----------------
+    @staticmethod
+    def _red_mask(bgr):
+        b, g, r = cv2.split(bgr.astype(np.int16))
+        red = np.clip(r - np.maximum(g, b), 0, 255).astype(np.uint8)
+        _, bw = cv2.threshold(red, 70, 255, cv2.THRESH_BINARY)
+        return bw
+
+    @staticmethod
+    def _white_mask(bgr):
+        b, g, r = cv2.split(bgr.astype(np.int16))
+        mx = np.maximum(np.maximum(b, g), r)
+        mn = np.minimum(np.minimum(b, g), r)
+        return (((mx > 195) & ((mx - mn) < 45)) * 255).astype(np.uint8)
+
+    def _ban_score(self, cell_bgr) -> float:
+        tpl = self._load_rel("ban_stamp")
+        if tpl is None:
+            return 0.0
+        m = self._red_mask(cell_bgr)
+        r = cv2.matchTemplate(m, tpl, cv2.TM_CCOEFF_NORMED)
+        _, mx, _, _ = cv2.minMaxLoc(r)
+        return float(mx)
+
+    def _check_score(self, cell_bgr) -> float:
+        tpl = self._load_rel("master_check")
+        if tpl is None:
+            return 0.0
+        m = self._white_mask(cell_bgr)
+        r = cv2.matchTemplate(m, tpl, cv2.TM_CCOEFF_NORMED)
+        _, mx, _, _ = cv2.minMaxLoc(r)
+        return float(mx)
+
+    def _cell_taken(self, cell_bgr, ban_phase: bool, param) -> bool:
+        if self._ban_score(cell_bgr) >= float(param.get("ban_threshold", 0.60)):
+            return True
+        if not ban_phase and self._check_score(cell_bgr) >= float(param.get("check_threshold", 0.55)):
+            return True
+        return False
+
+    def _cell_state(self, ctrl, ci, ri, param):
+        """返回 (bgr_cell, taken, ban_hit, check_hit)；截图为空返回 (None, ...)."""
+        bgr = self._grab_bgr(ctrl)
+        if bgr is None:
+            return None, True, False, False
+        cell = bgr[self.ROWS[ri - 1]:self.ROWS[ri - 1] + self.CELL,
+                   self.COLS[ci - 1]:self.COLS[ci - 1] + self.CELL]
+        if cell.size == 0 or float(cell.mean()) < 25:
+            return cell, True, False, False
+        b = self._ban_score(cell) >= float(param.get("ban_threshold", 0.60))
+        c = self._check_score(cell) >= float(param.get("check_threshold", 0.55))
+        return cell, (b or c), b, c
+
+    # ---------------- 点击 ----------------
+    def _click_cell(self, ctrl, ci, ri):
+        cx = self.COLS[ci - 1] + self.CELL // 2
+        cy = self.ROWS[ri - 1] + self.CELL // 2
+        ctrl.post_click(cx, cy).wait()
+        print(f"[MasterPick] 点击格 ({ci},{ri}) @ ({cx},{cy})", flush=True)
+
+    def _click_verify(self, ctrl, pos, ban: bool, param) -> bool:
+        ci, ri = pos
+        th = float(param.get("ban_threshold", 0.60) if ban else param.get("check_threshold", 0.55))
+        for attempt in range(2):
+            self._click_cell(ctrl, ci, ri)
+            time.sleep(float(param.get("click_settle", 0.45)))
+            _, _, b_hit, c_hit = self._cell_state(ctrl, ci, ri, param)
+            hit = b_hit if ban else c_hit
+            if hit:
+                return True
+            print(f"[MasterPick] 格 ({ci},{ri}) 第 {attempt + 1} 次点击未确认"
+                  f"（ban={b_hit} chk={c_hit} 阈值 {th}）", flush=True)
+        return False
+
+    def _fallback(self, ctrl, ban: bool, param, used):
+        """兜底：从第 1 格开始依次点，直到出现禁用标/白勾。"""
+        limit = int(param.get("fallback_max", 15))
+        tried = 0
+        for ri in range(1, 4):
+            for ci in range(1, 7):
+                if (ci, ri) in used:
+                    continue
+                cell, taken, _, _ = self._cell_state(ctrl, ci, ri, param)
+                if cell is None or taken:
+                    continue
+                if tried >= limit:
+                    print(f"[MasterPick] 兜底达到上限 {limit} 格", flush=True)
+                    return None
+                tried += 1
+                if self._click_verify(ctrl, (ci, ri), ban, param):
+                    return (ci, ri)
+        return None
+
+    # ---------------- 阶段收尾 ----------------
+    def _click_confirm(self, ctrl, param, tag=""):
+        """检测「确定」按钮并点击；没出现就等一会儿（选用阶段选满后才出现）。"""
+        tpl = self._load_rel("pick_confirm")
+        if tpl is None:
+            return False
+        cx, cy = param.get("confirm_xy", [622, 638])
+        cx, cy = int(cx), int(cy)
+        deadline = time.time() + float(param.get("confirm_wait", 6.0))
+        while time.time() < deadline:
+            bgr = self._grab_bgr(ctrl)
+            if bgr is not None:
+                gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+                x0, y0 = max(0, cx - 130), max(0, cy - 70)
+                patch = gray[y0:cy + 70, x0:cx + 130]
+                if patch.shape[0] >= tpl.shape[0] and patch.shape[1] >= tpl.shape[1]:
+                    r = cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED)
+                    _, mx, _, loc = cv2.minMaxLoc(r)
+                    if float(mx) >= 0.8:
+                        ctrl.post_click(x0 + loc[0] + tpl.shape[1] // 2,
+                                        y0 + loc[1] + tpl.shape[0] // 2).wait()
+                        print(f"[MasterPick] {tag} 点「确定」（score {mx:.3f}）", flush=True)
+                        time.sleep(float(param.get("confirm_settle", 1.2)))
+                        return True
+            time.sleep(0.4)
+        print(f"[MasterPick] {tag} 未发现「确定」按钮（可能阶段已自动切换）", flush=True)
+        return False
+
+    # ---------------- 页面判定 ----------------
+    def _wait_pick_page(self, ctrl, param) -> bool:
+        tpl = self._load_rel("pick_wait")
+        if tpl is None:
+            return True
+        th = float(param.get("pick_page_threshold", 0.8))
+        deadline = time.time() + float(param.get("pick_page_timeout", 60))
+        while time.time() < deadline:
+            bgr = self._grab_bgr(ctrl)
+            if bgr is not None:
+                gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+                if gray.shape[0] >= tpl.shape[0] and gray.shape[1] >= tpl.shape[1]:
+                    r = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
+                    _, mx, _, _ = cv2.minMaxLoc(r)
+                    if float(mx) >= th:
+                        print(f"[MasterPick] 选人页已出现（1P 标签 {mx:.3f}）", flush=True)
+                        return True
+            time.sleep(1.0)
+        return False
+
+    def _left_pick_page(self, ctrl, param) -> bool:
+        bgr = self._grab_bgr(ctrl)
+        if bgr is None:
+            return False
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        scores = {}
+        for name, th in (("pick_wait", 0.8), ("pick_confirm", 0.85)):
+            tpl = self._load_rel(name)
+            if tpl is None:
+                continue
+            if gray.shape[0] < tpl.shape[0] or gray.shape[1] < tpl.shape[1]:
+                continue
+            r = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
+            scores[name] = float(r.max()) >= th
+        if not scores:
+            return False
+        return not any(scores.values())
+
+    # ---------------- 工具 ----------------
+    def _grab_bgr(self, ctrl):
+        ctrl.post_screencap().wait()
+        img = ctrl.cached_image
+        if img is None:
+            return None
+        if img.ndim == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        sc = img.shape[1] / 1280.0
+        if abs(sc - 1.0) > 0.01:
+            img = cv2.resize(img, (1280, int(img.shape[0] / sc)), interpolation=cv2.INTER_AREA)
+        return img
+
+    @staticmethod
+    def _load_rel(rel: str):
+        return ArenaPick._load_rel(rel)
+
+    @staticmethod
+    def _parse_refs(raw, need: int):
+        """解析 "1,1,1;000;..." 或 [[1,1,1],...] → 长度 need 的列表，000 → None。"""
+        items = []
+        if isinstance(raw, str):
+            for part in raw.split(";"):
+                part = part.strip()
+                if not part:
+                    items.append(None)
+                    continue
+                if part == "000":
+                    items.append(None)
+                    continue
+                nums = part.split(",")
+                try:
+                    items.append([int(x) for x in nums] if len(nums) == 3 else None)
+                except ValueError:
+                    items.append(None)
+        elif isinstance(raw, list):
+            for p in raw:
+                if isinstance(p, (list, tuple)) and len(p) == 3:
+                    vals = [int(x) for x in p]
+                    items.append(None if all(v == 0 for v in vals) else vals)
+                elif isinstance(p, str):
+                    if p.strip() == "000":
+                        items.append(None)
+                    else:
+                        nums = p.split(",")
+                        try:
+                            items.append([int(x) for x in nums] if len(nums) == 3 else None)
+                        except ValueError:
+                            items.append(None)
+                else:
+                    items.append(None)
+        else:
+            items = []
+        while len(items) < need:
+            items.append(None)
+        return items[:need]

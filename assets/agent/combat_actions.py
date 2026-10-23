@@ -303,11 +303,19 @@ class CombatFighter(CustomAction):
 
     @classmethod
     def _main_page_hit(cls, gray, threshold: float) -> bool:
-        """竞技场主页面判定（arena_title 横幅，全屏匹配）。"""
-        tpl = cls._load_tpl("arena_title")
-        if tpl is None:
-            return False
-        return cls._match_score(gray, tpl, (0, 0, gray.shape[1], gray.shape[0])) >= threshold
+        """竞技场主界面判定：1v1 竞技区主页（arena_title）或大师竞技页（master_title）。
+
+        大师竞技场打完一局会回到「大师竞技」页面（不是 1v1 的竞技区主页），
+        两个页面都算「已离开战斗」，任一命中即收手。
+        """
+        roi = (0, 0, gray.shape[1], gray.shape[0])
+        for rel in ("arena_title", "master_title"):
+            tpl = cls._load_tpl(rel)
+            if tpl is None:
+                continue
+            if cls._match_score(gray, tpl, roi) >= threshold:
+                return True
+        return False
 
     @classmethod
     def _escape_misnav(cls, ctrl, gray, param) -> bool:
