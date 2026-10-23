@@ -517,13 +517,17 @@ class MasterPick(CustomAction):
         "check_threshold": 0.55,  // 白勾判定
         "confirm_xy": [622, 638], // 「确定」按钮（与 1v1 同位置）
         "pick_page_timeout": 60,  // 等选人页出现的秒数
-        "confirm_wait": 6         // 点确定前最多等按钮出现的秒数
+        "confirm_wait": 6,        // 点确定前最多等按钮出现的秒数
+        "mark_timeout": 2.0,      // 点击后轮询等标记（白勾/禁用标）出现的秒数
+        "mark_poll": 0.12         // 轮询间隔（每次轮询含一次截图，实际约 0.3s/次）
     }
 
     选人策略（用户 2026-10-23 现场确认）：
       1. 按输入顺序逐个用 1v1 角色模板扫描，凑齐 need 个（禁用 2 / 选用 3）立即停；
       2. 输入栏位都试完仍凑不齐，才「从第 1 格开始依次点」兜底补齐；
-      3. 多出来的输入位是备选，不会被强行点掉。
+      3. 多出来的输入位是备选，不会被强行点掉；
+      4. 全程有「选人页是否还在」守卫：倒计时归零游戏接管后立刻收手，不再盲点、
+         也不再点 确定（否则会把点击丢到大厅/主页上，把循环带偏）。
     """
 
     # 1280 基准网格（从 1920x1080 录屏帧缩放后边缘检测标定）
@@ -532,6 +536,7 @@ class MasterPick(CustomAction):
     ROWS = (19, 128, 237)
     CELL = 99
     ROLE_SIZE = 78           # 与 roles/*.png 同尺寸
+    _left_page = False       # 阶段中途选人页消失（游戏接管）标记，由 run() 每次重置
 
     @classmethod
     def _cells(cls):
@@ -545,6 +550,7 @@ class MasterPick(CustomAction):
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
         param = json.loads(argv.custom_action_param) if argv.custom_action_param else {}
         ctrl = context.tasker.controller
+        self._left_page = False
         print("[MasterPick] ===== 大师竞技场选人开始 =====", flush=True)
 
         if not self._wait_pick_page(ctrl, param):
@@ -552,12 +558,16 @@ class MasterPick(CustomAction):
             return False
 
         ok_ban = self._run_phase(ctrl, param, ban=True)
+        if self._left_page:
+            print("[MasterPick] [OK] 禁用中选人页已消失（游戏接管），放行让 pipeline 继续",
+                  flush=True)
+            return True
         ok_pick = self._run_phase(ctrl, param, ban=False)
 
         if ok_ban and ok_pick:
             print("[MasterPick] [OK] 禁用与选用均完成", flush=True)
             return True
-        if self._left_pick_page(ctrl, param):
+        if self._left_page or self._left_pick_page(ctrl, param):
             print("[MasterPick] [OK] 已离开选人页（顺序确认/战斗），按完成放行", flush=True)
             return True
         print("[MasterPick] [X] 选人未完成，且仍在选人页", flush=True)
@@ -575,7 +585,7 @@ class MasterPick(CustomAction):
         used = set()
         # 1) 按输入顺序找：命中就点，凑齐 need 立刻停（先输入的优先）
         for ref in refs:
-            if done >= need:
+            if done >= need or self._left_page:
                 break
             if ref is None:
                 print(f"[MasterPick] {tag}: 空栏位(000)，跳过", flush=True)
@@ -587,14 +597,16 @@ class MasterPick(CustomAction):
                 print(f"[MasterPick] {tag} {done}/{need} [OK] 命中栏位 "
                       f"{','.join(str(v) for v in ref)} -> 格 {pos}", flush=True)
             else:
+                if self._left_page:
+                    break
                 print(f"[MasterPick] {tag}: 栏位 {','.join(str(v) for v in ref)} "
                       f"未在本页找到/没点成功，继续下一个输入", flush=True)
 
         # 2) 输入都没凑齐 → 兜底：从第 1 格开始依次点，直到凑够 need
-        if done < need:
+        if done < need and not self._left_page:
             print(f"[MasterPick] {tag} 输入栏位只凑到 {done}/{need}，"
                   f"改走兜底：从第 1 格依次点（跳过已占格）", flush=True)
-            while done < need:
+            while done < need and not self._left_page:
                 fb = self._fallback(ctrl, ban, param, used)
                 if fb is None:
                     print(f"[MasterPick] {tag} [!] 兜底也点不出来，停在 {done}/{need}", flush=True)
@@ -603,6 +615,10 @@ class MasterPick(CustomAction):
                 done += 1
                 print(f"[MasterPick] {tag} {done}/{need} [OK] 兜底 -> 格 {fb}", flush=True)
 
+        if self._left_page:
+            print(f"[MasterPick] {tag}阶段中断：选人页已被游戏接管（完成 {done}/{need}）",
+                  flush=True)
+            return False
         self._click_confirm(ctrl, param, tag)
         print(f"[MasterPick] {tag}阶段结束：完成 {done}/{need}", flush=True)
         return done >= need
@@ -745,24 +761,59 @@ class MasterPick(CustomAction):
         print(f"[MasterPick] 点击格 ({ci},{ri}) @ ({cx},{cy})", flush=True)
 
     def _click_verify(self, ctrl, pos, ban: bool, param) -> bool:
+        """点一格并确认标记（禁用标/白勾）出现。
+
+        2026-10-23 现场 log 教训：原来是「点完固定 sleep 0.45s 就判」，实测这个
+        时间点标记还没渲染出来 → 判失败 → 再点一次。第二次点击把第一次的选择
+        又取消了（toggle），于是每一格都要点两下、实际选中数还是 0，选人阶段
+        从 3 秒拖到 20 秒以上，直接把选人倒计时耗光（倒计时归零游戏自动锁定后
+        跳走，后续点击全落在别的页面上，最后 确定 点回大厅，pipeline 等战斗
+        等到 180s 超时 → 整个任务失败停止）。
+        现在改成：点之前先看有没有标记（有就不点，避免取消），点完轮询最多
+        mark_timeout 秒等标记出现；只有真的等不到才补点，且补点前先确认页面
+        还在选人页。
+        """
         ci, ri = pos
-        th = float(param.get("ban_threshold", 0.60) if ban else param.get("check_threshold", 0.55))
-        for attempt in range(2):
+        # ① 点之前先看：已经有标记就别点（再点一次会把已选角色取消掉）
+        _, _, b0, c0 = self._cell_state(ctrl, ci, ri, param)
+        if (b0 if ban else c0):
+            print(f"[MasterPick] 格 ({ci},{ri}) 已有标记，免点", flush=True)
+            return True
+
+        tries = int(param.get("click_max_tries", 2))
+        for attempt in range(tries):
             self._click_cell(ctrl, ci, ri)
-            time.sleep(float(param.get("click_settle", 0.45)))
-            _, _, b_hit, c_hit = self._cell_state(ctrl, ci, ri, param)
-            hit = b_hit if ban else c_hit
-            if hit:
+            # ② 轮询等标记出现（不要固定 0.45s 就判死）
+            if self._wait_mark(ctrl, ci, ri, ban, param):
                 return True
             print(f"[MasterPick] 格 ({ci},{ri}) 第 {attempt + 1} 次点击未确认"
-                  f"（ban={b_hit} chk={c_hit} 阈值 {th}）", flush=True)
+                  f"（等 {float(param.get('mark_timeout', 2.0))}s 仍无标记）", flush=True)
+            # ③ 页面已经不是选人页了（倒计时归零/游戏接管）：不要再点，直接收手
+            if self._left_pick_page(ctrl, param):
+                self._left_page = True
+                print("[MasterPick] 选人页已消失（倒计时结束/游戏接管），停止点击", flush=True)
+                return False
         return False
+
+    def _wait_mark(self, ctrl, ci, ri, ban: bool, param) -> bool:
+        """点击后轮询等标记出现；出现即返回 True，超时返回 False。"""
+        deadline = time.time() + float(param.get("mark_timeout", 2.0))
+        poll = float(param.get("mark_poll", 0.12))
+        while True:
+            time.sleep(poll)
+            _, _, b, c = self._cell_state(ctrl, ci, ri, param)
+            if (b if ban else c):
+                return True
+            if time.time() >= deadline:
+                return False
 
     def _fallback(self, ctrl, ban: bool, param, used):
         """兜底：从第 1 格开始依次点，直到出现禁用标/白勾。"""
         limit = int(param.get("fallback_max", 15))
         tried = 0
         for ci, ri in self._cells():
+            if self._left_page:
+                return None
             if (ci, ri) in used:
                 continue
             cell, taken, _, _ = self._cell_state(ctrl, ci, ri, param)
@@ -779,6 +830,9 @@ class MasterPick(CustomAction):
     # ---------------- 阶段收尾 ----------------
     def _click_confirm(self, ctrl, param, tag=""):
         """检测「确定」按钮并点击；没出现就等一会儿（选用阶段选满后才出现）。"""
+        if self._left_page:
+            print(f"[MasterPick] {tag}: 已离开选人页，跳过点确定", flush=True)
+            return False
         tpl = self._load_rel("pick_confirm")
         if tpl is None:
             return False
@@ -825,22 +879,28 @@ class MasterPick(CustomAction):
         return False
 
     def _left_pick_page(self, ctrl, param) -> bool:
+        """当前是否已经不是选人页（判据：左上「1P」标签是否还在）。
+
+        选人页固定会在 (405,363) 90×50 处显示 1P 标签（三帧实测 0.995~0.996），
+        倒计时归零游戏接管后会跳到顺序页/战斗/「匹配已取消」弹窗，标签就没了。
+        不能改用「确定 按钮在不在」判断 —— 「匹配已取消」弹窗上同样有个 确定，
+        会被误判成还在选人页，然后接着点、把点击丢到大厅上。
+        也不能全屏找 1P —— 战斗 HUD 里也有 1P 字样，会误判成没离开。
+        """
+        tpl = self._load_rel("pick_wait")
+        if tpl is None:
+            return False
         bgr = self._grab_bgr(ctrl)
         if bgr is None:
             return False
         gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-        scores = {}
-        for name, th in (("pick_wait", 0.8), ("pick_confirm", 0.85)):
-            tpl = self._load_rel(name)
-            if tpl is None:
-                continue
-            if gray.shape[0] < tpl.shape[0] or gray.shape[1] < tpl.shape[1]:
-                continue
-            r = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
-            scores[name] = float(r.max()) >= th
-        if not scores:
+        rx, ry, rw, rh = param.get("pick_page_roi", [340, 320, 240, 140])
+        H, W = gray.shape[:2]
+        patch = gray[max(0, ry):min(H, ry + rh), max(0, rx):min(W, rx + rw)]
+        if patch.shape[0] < tpl.shape[0] or patch.shape[1] < tpl.shape[1]:
             return False
-        return not any(scores.values())
+        r = cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED)
+        return float(r.max()) < float(param.get("pick_page_threshold", 0.8))
 
     # ---------------- 工具 ----------------
     def _grab_bgr(self, ctrl):

@@ -197,7 +197,10 @@
         },
         "timeout": 300000,
         "next": [
-            "Arena_WaitBattle"
+            "Arena_WaitBattle",
+            "Arena_MainPage",
+            "Arena_Mode_1v1",
+            "Arena_Enter_1v1"
         ]
     },
     "Arena_WaitBattle": {
@@ -313,13 +316,25 @@
             ],
             "pick_page_timeout": 60,
             "confirm_wait": 6,
-            "click_settle": 0.45,
             "confirm_settle": 1.2,
-            "fallback_max": 15
+            "fallback_max": 15,
+            "mark_timeout": 2.0,
+            "mark_poll": 0.12,
+            "pick_page_roi": [
+                340,
+                320,
+                240,
+                140
+            ],
+            "pick_page_threshold": 0.8
         },
         "timeout": 180000,
         "next": [
-            "Arena_WaitBattle"
+            "Arena_WaitBattle",
+            "Arena_MasterPage",
+            "Arena_Mode_Master",
+            "Arena_Enter_Master",
+            "Arena_MainPage"
         ]
     }
 }

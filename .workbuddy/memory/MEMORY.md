@@ -40,6 +40,12 @@
   踩过：**option 不支持 `default_check`**（只有 taskItem 支持，schema additionalProperties=false）——之前「大师选人栏位」带着它，已删；选项只要被 task 的 `option` 数组引用就会显示，不需要 default_check。
 - input 选项每个 `inputs[]` 支持自己的 `description`（会显示成字段旁的问号提示），长说明应放 option.description / input.description，**不要堆在 label 括号里**（会把文本框挤没）。
 
+## 点击类 CustomAction 的三条铁律（2026-10-23，v1.2.4 现场教训）
+- **点完不能固定 sleep 就判标记**：模拟器/游戏 UI 渲染有 0.5~0.9s 延迟，固定 0.45s 判定必然"失败"，再点一次会把已选取消（toggle）→ 每格两次点击、实际选中 0，整段流程被拖过倒计时。正确做法：点前先查已有标记（有则免点），点后轮询（`mark_timeout`/`mark_poll`）等标记出现，只有真等不到才补点。
+- **阶段中途要有「页面还在吗」守卫**：页面被游戏接管后继续盲点会把点击丢到别的界面（回到大厅/主页/点到取消弹窗），把循环带偏。判据要用页面独有的稳定锚点（大师选人页 = 「1P」标签 @(405,363) 90×50，ROI [340,320,240,140]），不要用「确定 按钮在不在」（取消弹窗上也有），也不要全屏找通用文字（战斗 HUD 里也有 1P）。
+- **每个 CustomAction 节点的 `next` 必须带兜底**：MaaFramework 里 next 列表评估的时长上限是**当前节点的 timeout**（MasterPick=180s），列表里没节点命中就一直空转，到点 node timeout → **整个任务 failed 停止**（MFA 外壳还打「任务已全部完成」，极易误判成正常结束）。所以 MasterPick/Pick 的 next 都要包含 WaitBattle + 大厅 + 竞技区卡 + 首页竞技入口 + 竞技区主页面；master 任务还要在 interface 里把 `Arena_MainPage.next` 改成先 Mode_Master，否则会被 base 的 Mode_1v1 抢走。
+- 排错时看 `debug/on_error/<Node>_<时间>.png`：它是**节点超时那一刻的截图**，直接告诉你卡在哪个界面（v1.2.4 就靠它确认"卡在大师团大厅而不是战斗"）。
+
 ## 协作偏好
 - base pipeline 参数保持 MAAFramework 规范默认值（如 quick_pick:true），个性化由 interface.json 选项 override 覆盖，不要改 base 默认。
 - MaaDebugger v1.17 是裸流水线调试器：不渲染 select/input 选项，用 Pipeline Override JSON 注参。**它完全不会读 interface.json、也不会拉起 agent**（源码 grep 无 interface/child_exec）——Agent Identifier 的 CONNECT 只是创建带该 identifier 的监听端并等 5s（`set_timeout(5000)`），必须先在终端手动跑 `assets> libs\python\python.exe agent\main.py <identifier>`（identifier 用输入框里那个，持久保存在 STORAGE），agent 存活期间点 CONNECT 才能连上。
