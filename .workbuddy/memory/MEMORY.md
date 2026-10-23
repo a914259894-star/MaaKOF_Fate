@@ -64,6 +64,13 @@
 - **主城兜底**：主城 = `arena/main_arena_btn.png`（85×85「KO 竞技」图标）全屏匹配 ≥0.85（主城 1.0 / 大师团页 0.489 / 选人页 0.516 / 战斗 0.496，单次约 20ms）。agent 每轮快速检查 + `_escape_misnav` 都判，命中立即 break；pipeline 里 `Arena_HomePage`（≥0.7）→ `Arena_Enter_1v1`（大师任务被 interface 覆盖成 `Arena_Enter_Master`，否则从主城会误进 1v1）。
 - **兜底返回不再盲点**：`Arena_UnknownBack` 已从 `DirectHit+Click` 改成 Custom `ArenaSafeBack`——已在竞技场页/大师团页/主城就不点（这正是「返回键多按了退到主城」的元凶），只有真子页面才点红色箭头。
 
+## agent 内识别的性能铁律（v1.2.10 实测，勿违反）
+- **`context.run_recognition` 一次 IPC 往返 400~800ms**（Tasker 侧调度 + 同步），只能用于低频/一次性判断；**绝不能放进战斗高频循环**。现场症状：开局站桩 1.34s（自检 780ms + 首轮检查 500ms）+ 战斗中每 4s 固定空档 0.55~0.67s（`Fight_Lose` 每 4s 查一次）。
+- 同模板同阈值的 **cv2 本地灰度匹配**耗时（1280 基准）：团队页判定 1.5ms、主城全屏 20ms、`_main_page_hit` 双模板 47ms、误点 4 模板 4ms、全屏结算 24ms。凡是「模板 + 阈值」能表达的识别，一律本地做。
+- `_hit_any` 已有分发：`_RESULT_TPLS = {Fight_Lose: lose_text, Fight_Win: win_text}` 走本地；其它节点（`Fight_Substitute` 这种 Custom recognition）不传 `gray` 就走 IPC。
+- **`_load_tpl(rel)` 的根是 `_ARENA_DIR`（`image/arena`）**：`lose_text` 不能写成 `arena/lose_text`（子目录才带前缀，如 `wrong/wrong_shop`）。写错只打印「缺少模板」并返回 None，会静默失效。
+- 首轮检查要推迟：`next_result_check = time.time() + result_interval`，**不能初值 0**（否则进循环第一件事就是查结算，白等半秒）。
+
 ## 协作偏好
 - base pipeline 参数保持 MAAFramework 规范默认值（如 quick_pick:true），个性化由 interface.json 选项 override 覆盖，不要改 base 默认。
 - MaaDebugger v1.17 是裸流水线调试器：不渲染 select/input 选项，用 Pipeline Override JSON 注参。**它完全不会读 interface.json、也不会拉起 agent**（源码 grep 无 interface/child_exec）——Agent Identifier 的 CONNECT 只是创建带该 identifier 的监听端并等 5s（`set_timeout(5000)`），必须先在终端手动跑 `assets> libs\python\python.exe agent\main.py <identifier>`（identifier 用输入框里那个，持久保存在 STORAGE），agent 存活期间点 CONNECT 才能连上。

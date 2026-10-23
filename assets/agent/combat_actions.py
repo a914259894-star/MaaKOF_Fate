@@ -185,15 +185,28 @@ class CombatFighter(CustomAction):
         # 结算识别降频：全屏模板识别在慢环境下单次可达 1~2.4s，
         # 每轮都查会把出招拖成涓流。每 result_interval 秒查一次足够（60s 级别的战斗）。
         result_interval = float(param.get("result_interval", 4.0))
-        next_result_check = 0.0
+        # v1.2.10：第一次检查要推迟一个周期再跑。原来初始 0 = 进循环立刻查一轮
+        # 「误点 + 结算 + 未知界面」，实测要 500ms，等于开局又白站半秒。推迟后
+        # 第一件事就是出招，检查在 4s 后照常进行（漏查的窗口只有 4s，够安全）。
+        next_result_check = time.time() + result_interval
 
-        # 开打自检：确认画面真的是战斗界面（截图若失败会是旧帧，这里能暴露）
+        # 开打自检：确认画面真的是战斗界面（截图若失败会是旧帧，这里能暴露）。
+        # v1.2.10：原来用 context.run_recognition 走一次 MaaFramework 识别，实测
+        # 一次 IPC 往返 780ms（现场 21:07:07.082 → 07.880），开局白白站桩。改成和
+        # 主循环相同的本地灰度匹配（约 20ms），诊断作用不变。
         _shot(ctrl)
         img0 = ctrl.cached_image
-        if img0 is not None:
+        if img0 is not None and getattr(img0, "size", 0):
             try:
-                det = context.run_recognition("Arena_WaitBattle", img0)
-                print(f"[CombatFighter] 开打画面=战斗界面: {bool(det and det.hit)}", flush=True)
+                g0 = self._to_gray_1280(img0)
+                roi0 = (0, 0, g0.shape[1], g0.shape[0])
+                ok = False
+                for rel in ("battle_bar", "battle_btn"):
+                    tpl = self._load_tpl(rel)
+                    if tpl is not None and self._match_score(g0, tpl, roi0) >= 0.8:
+                        ok = True
+                        break
+                print(f"[CombatFighter] 开打画面=战斗界面: {ok}", flush=True)
             except Exception as e:
                 print(f"[CombatFighter] 开打自检异常: {e}", flush=True)
         t0 = time.time()
@@ -249,7 +262,7 @@ class CombatFighter(CustomAction):
                     next_result_check = now + result_interval
                     if self._escape_misnav(ctrl, gray, param):
                         break
-                    if self._hit_any(context, img, result_nodes):
+                    if self._hit_any(context, img, result_nodes, gray):
                         print("[CombatFighter] 检测到胜负结算，停止出招", flush=True)
                         break
                     # ④ 未知界面兜底：既不是已知误点界面/主界面/结算，画面又长期不动
@@ -606,10 +619,32 @@ class CombatFighter(CustomAction):
         except Exception:
             return None
 
-    @staticmethod
-    def _hit_any(context: Context, img, nodes: list[str]) -> bool:
-        """对给定节点逐个跑识别（只识别不动作），任一命中返回 True。"""
+    # 结算模板本地快速匹配表（v1.2.10）：节点名 -> (模板相对路径, 阈值)
+    # 为什么不再走 context.run_recognition：一次 IPC 往返实测 400ms 以上，每
+    # result_interval(4s) 查一次就等于每 4 秒把出招打断 0.6s（现场 21:07 那场
+    # 21:07:12/16/20/24… 每 4 秒准时停 0.55~0.67s 全是它）。本地灰度
+    # TM_CCOEFF_NORMED 全屏匹配只要 24ms，判定口径与节点里的 TemplateMatch 一致。
+    _RESULT_TPLS = {
+        "Fight_Lose": ("lose_text", 0.8),
+        "Fight_Win": ("win_text", 0.8),
+    }
+
+    @classmethod
+    def _hit_any(cls, context: Context, img, nodes: list[str], gray=None) -> bool:
+        """对给定节点逐个跑识别（只识别不动作），任一命中返回 True。
+
+        已知结算节点（_RESULT_TPLS）在有灰度帧时走本地匹配，其余（如替身这种
+        Custom recognition）仍走 context.run_recognition。gray=None 时全部走 IPC。
+        """
         for node in nodes:
+            spec = cls._RESULT_TPLS.get(node)
+            if spec is not None and gray is not None and getattr(gray, "size", 0):
+                tpl = cls._load_tpl(spec[0])
+                if tpl is not None:
+                    roi = (0, 0, gray.shape[1], gray.shape[0])
+                    if cls._match_score(gray, tpl, roi) >= float(spec[1]):
+                        return True
+                    continue
             try:
                 det = context.run_recognition(node, img)
             except Exception:
