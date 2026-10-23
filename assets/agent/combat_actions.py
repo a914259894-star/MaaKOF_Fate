@@ -114,7 +114,10 @@ class CombatFighter(CustomAction):
         "stall_checks": 5,             // 连续几次检查画面纹丝不动才算卡死（5×4s=20s）
         "stall_diff": 1.5,             // 32x18 签名平均绝对差阈值（装备页实测 0~0.5）
         "stall_max": 4,                // 最多点几次返回，用满后不再兜底
-        "settle_threshold": 0.8        // 结算元素阈值（命中则不点返回）
+        "settle_threshold": 0.8,       // 结算元素阈值（命中则不点返回）
+        // —— 大师团页快速收手（2026-10-23 v1.2.6） ——
+        "team_roi": [380, 20, 560, 90], // master_title（大师竞技横幅）所在位置
+        "team_threshold": 0.9          // 该 ROI 内命中即判定已回到大师团页
     }
 
     退出设计（2026-10-22 定稿）：盲点速度快，可能误点进竞技场的子界面且多层嵌套。
@@ -122,13 +125,20 @@ class CombatFighter(CustomAction):
       ① 玩家详情弹窗 → 点 X 关闭（回排行榜）
       ② 排行榜 / 至尊赛 / 商城 → 点右上返回
       ①②循环处理嵌套（最多 wrong_max_layers 层）；
-      ③ 全部未命中且识别到竞技场主页面（arena_title）→ 收手 break，交还流水线进下一轮；
+      ③ 全部未命中且识别到竞技场主页面（arena_title / 大师团页 master_title）→
+        收手 break，交还流水线进下一轮；
       ④ 无误点且非主页面 → 检查失败结算文字（只查 lose），命中 break 交还 Fight_Lose
         → Arena_SettleOk 点确认（失败结算画面盲点点不掉，v1.1.3 实测卡死 900s 的教训；
         胜利结算盲点自己会点掉回主界面，不查 win）；
       ⑤ 画面连续 stall_checks 次几乎不动、又不是上面任何一种（如装备页）→ 未知界面
         兜底：点右上红色返回箭头自救（v1.2.2，最多 stall_max 次）；
       ⑥ 都未命中 → 还在战斗，继续盲点。
+
+    大师团页特例（v1.2.6）：胜利后残留盲点会落到大师团页——那页 1137,632 正好是
+    「匹配战斗」、981,643 正好是「一键上阵」，会盲点掉底部角色行的上阵角色。那页
+    没有任何能跳走的入口，误点跑不了，所以不再对它做任何「返回/关闭」自救，只做
+    一件事：每轮循环先用小 ROI 判一次（master_title + 卡位勾），命中就立刻停手，
+    把「补人 + 继续匹配」交给流水线（Arena_TeamFix → Arena_MasterMatch）。
     """
 
     # 误点界面定义（顺序即检测顺序：玩家详情必须最先——弹窗开着时背景标题仍可见）
@@ -199,13 +209,23 @@ class CombatFighter(CustomAction):
 
                 _shot(ctrl)
                 img = ctrl.cached_image
+                gray = None
+                if img is not None and getattr(img, "size", 0):
+                    gray = self._to_gray_1280(img)
+                    # 大师团页优先判（v1.2.6）：胜利用盲点退回大师团页时，这一页的
+                    # 1137,632=匹配战斗、981,643=一键上阵，继续盲点会把底部角色行的
+                    # 上阵角色点掉。判得越早越少误点，所以每轮都查（小 ROI，很便宜）。
+                    if self._team_page_hit(gray, param):
+                        print("[CombatFighter] 已回到大师团页（胜利后盲点退回），立即停手",
+                              flush=True)
+                        break
 
                 # 每 10s 打一个画面指纹：数字一直完全不变 => 截图是死的旧帧
                 now = time.time()
-                if img is not None and getattr(img, "size", 0) and now - last_report >= 10:
+                if gray is not None and now - last_report >= 10:
                     last_report = now
                     try:
-                        fp = float(img.mean())
+                        fp = float(gray.mean())
                     except Exception:
                         fp = -1.0
                     print(f"[CombatFighter] t={now - t0:.0f}s 画面均值={fp:.1f}", flush=True)
@@ -214,9 +234,8 @@ class CombatFighter(CustomAction):
                 # ① 命中误点界面 => 循环执行退出（嵌套逐层退），直到回主界面才收手 break；
                 # ② 无误点且非主界面 => 检查胜负结算文字（失败结算盲点点不掉，必须兜底）；
                 # ③ 都未命中 => 还在战斗，继续盲点。
-                if img is not None and getattr(img, "size", 0) and now >= next_result_check:
+                if gray is not None and now >= next_result_check:
                     next_result_check = now + result_interval
-                    gray = self._to_gray_1280(img)
                     if self._escape_misnav(ctrl, gray, param):
                         break
                     if self._hit_any(context, img, result_nodes):
@@ -315,6 +334,32 @@ class CombatFighter(CustomAction):
                 return name, act
         return None
 
+    # 大师团页底部角色行的卡位（勾徽章中心，1280 基准；间距 137）
+    _TEAM_SLOTS = ((126, 640), (262, 640), (400, 640), (537, 640), (674, 640))
+
+    @classmethod
+    def _team_page_hit(cls, gray, param) -> bool:
+        """是不是「大师团」上阵页（v1.2.6）。
+
+        双重判据，避免战斗画面里偶然命中横幅：master_title 在窄 ROI
+        (默认 380,20,560,90) 内 ≥ team_threshold，且底部角色行至少一个卡位
+        带着白色圆形勾（上阵标记，实测已上阵 0.93~1.00 / 未上阵 0.22）。
+        """
+        roi = tuple(int(v) for v in param.get("team_roi", [380, 20, 560, 90]))
+        th = float(param.get("team_threshold", 0.9))
+        title = cls._load_tpl("master_title")
+        if title is None:
+            return False
+        if cls._match_score(gray, title, roi) < th:
+            return False
+        badge = cls._load_tpl("master_team_check")
+        if badge is None:
+            return False
+        for cx, cy in cls._TEAM_SLOTS:
+            if cls._match_score(gray, badge, (cx - 40, cy - 40, 80, 80)) >= 0.7:
+                return True
+        return False
+
     @classmethod
     def _main_page_hit(cls, gray, threshold: float) -> bool:
         """竞技场主界面判定：1v1 竞技区主页（arena_title）或大师竞技页（master_title）。
@@ -402,6 +447,12 @@ class CombatFighter(CustomAction):
         settle = float(param.get("wrong_settle_ms", 1200)) / 1000
         settle_th = float(param.get("settle_threshold", 0.8))
         back_xy = param.get("back_xy", [1244, 28])
+
+        # 大师团页不点返回（v1.2.6）：这页没有任何能跳走的入口，误点跑不了，
+        # 点返回反而会把界面带走；补人交给 Arena_TeamFix。
+        if cls._team_page_hit(gray, param):
+            stall["cnt"] = 0
+            return False
 
         sig = cv2.resize(gray, (32, 18), interpolation=cv2.INTER_AREA)
         prev = stall.get("sig")

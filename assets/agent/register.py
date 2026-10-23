@@ -14,7 +14,7 @@ from combat_actions import (
 )
 from combat_recognition import CombatAlwaysHit, SkillReadyBright
 from farm_actions import FarmTap
-from arena_actions import ArenaPick, MasterPick
+from arena_actions import ArenaPick, MasterPick, MasterTeamFix
 
 # (注册名, 实例)
 CUSTOM_ACTIONS = [
@@ -25,6 +25,7 @@ CUSTOM_ACTIONS = [
     ("FarmTap", FarmTap()),  # 你的流程动作在这里加
     ("ArenaPick", ArenaPick()),
     ("MasterPick", MasterPick()),  # 大师竞技场选人（先禁用后选用）
+    ("MasterTeamFix", MasterTeamFix()),  # 大师团页：补回被盲点误点下阵的角色
 ]
 
 CUSTOM_RECOGNITIONS = [

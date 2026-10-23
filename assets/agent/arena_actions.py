@@ -1039,3 +1039,185 @@ class MasterPick(CustomAction):
                 items.append(None)
             items = items[:need]
         return items
+
+
+# ============================================================================
+# 大师团「上阵角色」修复（2026-10-23 v1.2.6）
+# ============================================================================
+class MasterTeamFix(CustomAction):
+    """把被盲点误点下阵的角色重新点上，避免「角色不够、匹配不了」。
+
+    背景（用户 2026-10-23 现场反馈）：
+      战斗里是盲点出招，胜利后残留的盲点会落在大师团页上——这页的
+      1137,632 正好是「匹配战斗」、981,643 正好是「一键上阵」，盲点会把底部
+      角色行里已上阵的角色点掉，下一轮就凑不齐人。
+
+      这一页没有任何能跳走的入口（点了也在本页），所以「误点跑飞」不用担心，
+      只要把人补回来即可。
+
+    修复规则（用户要求）：
+      底部角色行每个卡位正中都有一个白色圆形勾（= 已上阵）：
+        1. 从最左开始找第一个「没有这个勾」的卡位 → 点它 → 勾出现即补上；
+        2. 可见卡位全都有勾时，从右往左拖一下角色行（看后面还有没有没上阵的），
+           拖到底（画面纹丝不动）就收手；
+        3. 点了却没出勾（比如已经满员）→ 立即收手，不再瞎点。
+
+    判定实测（1146x645 现场截图 → 1280 基准换算）：
+      已上阵卡位 0.93~1.00，未上阵卡位 0.22 → 阈值 0.70 分离干净。
+      卡位（勾中心）：x=126,263,400,537,674（间距 137），y=640。
+
+    custom_action_param（见 arena.json 的 Arena_TeamFix，全部可省略）：
+    {
+        "slots": [[126,640],[262,640],[400,640],[537,640],[674,640]],
+        "click_dy": 42,        // 点击点 = 卡位中心 +(0,42)，避开正中的勾（勾半径 22）
+        "badge": "master_team_check",
+        "badge_half": 40,      // 在卡位中心 ±40 的窗口里找勾
+        "badge_threshold": 0.70,
+        "max_add": 5,          // 一轮最多补几个（防意外连点）
+        "team_size": 0,        // 0=不限；填当前正确的上阵人数（截图里是 4）后，
+                               // 已够数就直接跳过（防止队伍满了还每局去点一个不会变勾的卡位）
+        "mark_timeout": 1.6,   // 点完等勾出现的秒数
+        "mark_poll": 0.15,
+        "max_drags": 3,        // 最多拖几次角色行
+        "swipe": {"from":[740,640], "to":[140,640], "ms":350, "settle_ms":400},
+        "page_roi": [380,20,560,90],   // master_title（大师竞技横幅）位置，用于页面守卫
+        "page_threshold": 0.85
+    }
+    """
+
+    TEAM_SLOTS = ((126, 640), (262, 640), (400, 640), (537, 640), (674, 640))
+
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        param = json.loads(argv.custom_action_param) if argv.custom_action_param else {}
+        ctrl = context.tasker.controller
+
+        slots = [tuple(int(v) for v in s) for s in param.get("slots", self.TEAM_SLOTS)]
+        click_dy = int(param.get("click_dy", 42))
+        half = int(param.get("badge_half", 40))
+        badge_th = float(param.get("badge_threshold", 0.70))
+        max_add = max(1, int(param.get("max_add", 5)))
+        team_size = int(param.get("team_size", 0))
+        mark_timeout = float(param.get("mark_timeout", 1.6))
+        mark_poll = float(param.get("mark_poll", 0.15))
+        max_drags = max(0, int(param.get("max_drags", 3)))
+        swipe = param.get("swipe", {"from": [740, 640], "to": [140, 640],
+                                    "ms": 350, "settle_ms": 400})
+        page_roi = tuple(int(v) for v in param.get("page_roi", [380, 20, 560, 90]))
+        page_th = float(param.get("page_threshold", 0.85))
+
+        badge = imread_cn(os.path.join(_ARENA_DIR, param.get("badge", "master_team_check") + ".png"),
+                          cv2.IMREAD_GRAYSCALE)
+        title = imread_cn(os.path.join(_ARENA_DIR, "master_title.png"), cv2.IMREAD_GRAYSCALE)
+        if badge is None or title is None:
+            print("[TeamFix] 缺少模板（master_team_check / master_title），跳过修复", flush=True)
+            return True
+
+        img = self._grab(ctrl)
+        if img is None:
+            return True
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        if self._score(gray, title, page_roi) < page_th:
+            print("[TeamFix] 当前不在大师团页，跳过上阵修复", flush=True)
+            return True
+
+        done = [self._checked(gray, badge, s, half) >= badge_th for s in slots]
+        print("[TeamFix] 底部角色行上阵状态: " + "".join("O" if d else "-" for d in done)
+              + f"（{sum(done)}/{len(done)}）", flush=True)
+
+        if team_size > 0 and sum(done) >= team_size:
+            print(f"[TeamFix] 上阵 {sum(done)} 个，已达预设人数 {team_size}，无需修复", flush=True)
+            return True
+
+        added = 0
+        drags = 0
+        while added < max_add:
+            if context.tasker.stopping:
+                break
+            idx = next((i for i, d in enumerate(done) if not d), None)
+            if idx is None:
+                # 可见卡位全上阵 → 往右看还有没有没上阵的
+                if drags >= max_drags:
+                    print("[TeamFix] 可见卡位都已上阵，且已拖到头，结束修复", flush=True)
+                    break
+                drags += 1
+                print(f"[TeamFix] 可见卡位都已上阵，右→左拖动角色行（第 {drags}/{max_drags} 次）",
+                      flush=True)
+                before = cv2.resize(gray, (32, 18), interpolation=cv2.INTER_AREA)
+                ArenaPick._do_swipe(ctrl, swipe)
+                img = self._grab(ctrl)
+                if img is None:
+                    break
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                after = cv2.resize(gray, (32, 18), interpolation=cv2.INTER_AREA)
+                if float(cv2.absdiff(before, after).mean()) < 0.8:
+                    print("[TeamFix] 角色行拖不动了（已到最右/只有这一页），结束修复", flush=True)
+                    break
+                done = [self._checked(gray, badge, s, half) >= badge_th for s in slots]
+                print("[TeamFix] 拖动后上阵状态: " + "".join("O" if d else "-" for d in done),
+                      flush=True)
+                continue
+
+            cx, cy = slots[idx]
+            px, py = int(cx), int(cy) + click_dy
+            print(f"[TeamFix] 第 {idx + 1} 个卡位没有上阵勾，点击 ({px},{py})", flush=True)
+            ctrl.post_click(px, py).wait()
+
+            if self._wait_badge(ctrl, badge, (cx, cy), half, badge_th, mark_timeout, mark_poll):
+                added += 1
+                done[idx] = True
+                print(f"[TeamFix] [OK] 第 {idx + 1} 个卡位已上阵（本轮累计 {added} 个）", flush=True)
+                continue
+
+            print(f"[TeamFix] 第 {idx + 1} 个卡位点了没出勾（可能已满员/不可上阵），收手不再补",
+                  flush=True)
+            break
+
+        print(f"[TeamFix] 修复结束：本轮补上 {added} 个", flush=True)
+        return True
+
+    # ---------------- 内部工具 ----------------
+
+    @staticmethod
+    def _grab(ctrl):
+        """截图 → 宽 1280 的 BGR（坐标统一 1280 基准）。"""
+        ctrl.post_screencap().wait()
+        img = ctrl.cached_image
+        if img is None or not getattr(img, "size", 0):
+            return None
+        if img.ndim == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        sc = img.shape[1] / 1280.0
+        if abs(sc - 1.0) > 0.01:
+            img = cv2.resize(img, (1280, int(img.shape[0] / sc)), interpolation=cv2.INTER_AREA)
+        return img
+
+    @staticmethod
+    def _score(gray, tpl, roi) -> float:
+        x, y, w, h = roi
+        H, W = gray.shape[:2]
+        patch = gray[max(0, y):min(H, y + h), max(0, x):min(W, x + w)]
+        th, tw = tpl.shape[:2]
+        if patch.shape[0] < th or patch.shape[1] < tw:
+            return -1.0
+        return float(cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED).max())
+
+    @classmethod
+    def _checked(cls, gray, badge, slot, half) -> float:
+        """卡位中心 ±half 窗口里找上阵勾，返回最高分。"""
+        cx, cy = slot
+        roi = (cx - half, cy - half, half * 2, half * 2)
+        return cls._score(gray, badge, roi)
+
+    @classmethod
+    def _wait_badge(cls, ctrl, badge, slot, half, th, timeout, poll) -> bool:
+        """点完之后轮询等勾出现（游戏 UI 有 0.3~0.9s 渲染延迟，不能点完就判）。"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(poll)
+            img = cls._grab(ctrl)
+            if img is None:
+                continue
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            if cls._checked(gray, badge, slot, half) >= th:
+                return True
+        return False
