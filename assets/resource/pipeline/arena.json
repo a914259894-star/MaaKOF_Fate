@@ -306,15 +306,24 @@
             "ban_count": 2,
             "pick_count": 3,
             "role_threshold": 0.86,
-            "role_threshold_low": 0.72,
+            "role_threshold_low": 0.82,
             "role_gap": 0.12,
             "ban_threshold": 0.6,
             "check_threshold": 0.55,
+            "ban_confirm": false,
             "confirm_xy": [
                 622,
                 638
             ],
             "pick_page_timeout": 60,
+            "pick_phase_timeout": 30,
+            "pick_phase_roi": [
+                520,
+                645,
+                240,
+                70
+            ],
+            "pick_phase_threshold": 0.75,
             "confirm_wait": 6,
             "confirm_settle": 1.2,
             "fallback_max": 15,

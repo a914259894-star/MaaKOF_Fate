@@ -510,13 +510,18 @@ class MasterPick(CustomAction):
         "pick_picks": "1,1,1;1,1,2;1,1,3;...",  // 选用：需要 3 个，可多填作备选
         "ban_count": 2, "pick_count": 3,     // 每阶段要凑够的个数
         "role_threshold": 0.86,   // 角色模板命中阈值（实测命中 0.96~0.99）
-        "role_threshold_low": 0.72, "role_gap": 0.12,
-        // 角标/勾/徽章会把分数压到 0.7~0.8（实测 2P 角标 0.776）；
-        // 分数不够高时，只要比其余格子高出 role_gap 也认（同角色一页只出现一次）。
+        "role_threshold_low": 0.82, "role_gap": 0.12,
+        // 严格档之外只留一条窄缝（0.82~0.86 + 明显领先其余格子），不要放到 0.72：
+        // 实测「别的角色」最高能到 0.787（623 模板碰 713 格子正好 0.787），放到 0.72
+        // 会把别的角色当目标点掉（2026-10-23 现场 0.771 就点错了）。
         "ban_threshold": 0.60,    // 禁用标判定
         "check_threshold": 0.55,  // 白勾判定
+        "ban_confirm": false,     // 禁用阶段是否点「确定」（默认不点，见下）
         "confirm_xy": [622, 638], // 「确定」按钮（与 1v1 同位置）
         "pick_page_timeout": 60,  // 等选人页出现的秒数
+        "pick_phase_timeout": 30, // 禁用结束后等「选用阶段」真正开始的秒数
+        "pick_phase_roi": [520, 645, 240, 70],  // 底部「温馨提示」ROI（x,y,w,h）
+        "pick_phase_threshold": 0.75,           // 温馨提示命中阈值（正例 ≥0.986）
         "confirm_wait": 6,        // 点确定前最多等按钮出现的秒数
         "mark_timeout": 2.0,      // 点击后轮询等标记（白勾/禁用标）出现的秒数
         "mark_poll": 0.12         // 轮询间隔（每次轮询含一次截图，实际约 0.3s/次）
@@ -528,6 +533,10 @@ class MasterPick(CustomAction):
       3. 多出来的输入位是备选，不会被强行点掉；
       4. 全程有「选人页是否还在」守卫：倒计时归零游戏接管后立刻收手，不再盲点、
          也不再点 确定（否则会把点击丢到大厅/主页上，把循环带偏）。
+      5. 禁用阶段点完 2 个不点「确定」，让 20s 倒计时自然结束 —— 点了确定只是我方向
+         游戏声明完成，游戏还要等对手也确认才切进选用阶段；这段等待期（实测
+         1.7~17.7s）里点格子全部无效，会把前几个输入白白耗掉。所以改成：等底部出现
+         「温馨提示：请选择格斗家」橙字（master_pick_tip）→ 确认真的进了选用阶段 → 再点。
     """
 
     # 1280 基准网格（从 1920x1080 录屏帧缩放后边缘检测标定）
@@ -562,6 +571,16 @@ class MasterPick(CustomAction):
             print("[MasterPick] [OK] 禁用中选人页已消失（游戏接管），放行让 pipeline 继续",
                   flush=True)
             return True
+
+        # 禁用结束后不要立刻点 —— 见类文档第 5 条：先等「温馨提示」确认进入选用阶段
+        if not bool(param.get("ban_confirm", False)):
+            if not self._wait_pick_phase(ctrl, param):
+                if self._left_page or self._left_pick_page(ctrl, param):
+                    print("[MasterPick] [OK] 等选用阶段时页面已离开，放行", flush=True)
+                    return True
+                print("[MasterPick] [!] 迟迟没进选用阶段，退回旧路径：点「确定」再试", flush=True)
+                self._click_confirm(ctrl, param, "禁用")
+                time.sleep(float(param.get("confirm_settle", 1.2)))
         ok_pick = self._run_phase(ctrl, param, ban=False)
 
         if ok_ban and ok_pick:
@@ -619,6 +638,12 @@ class MasterPick(CustomAction):
             print(f"[MasterPick] {tag}阶段中断：选人页已被游戏接管（完成 {done}/{need}）",
                   flush=True)
             return False
+        if ban and not bool(param.get("ban_confirm", False)):
+            # 不点确定：点了也只是「我方声明完成」，游戏仍要等对手确认，中间那段
+            # 等待期点击全是空转。让它自然结束，run() 里等「温馨提示」再开始选用。
+            print(f"[MasterPick] {tag}阶段结束：完成 {done}/{need}"
+                  f"（不点确定，等倒计时自然进入选用阶段）", flush=True)
+            return done >= need
         self._click_confirm(ctrl, param, tag)
         print(f"[MasterPick] {tag}阶段结束：完成 {done}/{need}", flush=True)
         return done >= need
@@ -646,7 +671,7 @@ class MasterPick(CustomAction):
             print(f"[MasterPick] {ref}: 截图为空", flush=True)
             return None
         th = float(param.get("role_threshold", 0.86))
-        th_low = float(param.get("role_threshold_low", 0.72))
+        th_low = float(param.get("role_threshold_low", 0.82))
         gap_min = float(param.get("role_gap", 0.12))
         tpls = self._scale_tpls(tpl, param)
         scores = {}
@@ -666,12 +691,19 @@ class MasterPick(CustomAction):
             return None
         order = sorted(scores.items(), key=lambda kv: -kv[1])
         (best_cell, best), second = order[0], (order[1][1] if len(order) > 1 else 0.0)
-        # 双判据：高分直接认；分数被角标/勾/徽章压低的（实测 2P 角标 0.776），
-        # 只要它明显压过其余格子（gap ≥ 0.12）也认 —— 同一个角色一页只出现一次。
+        # 双判据：高分直接认；分数被角标压低的只在 0.82~0.86 的窄缝里、且明显压过
+        # 其余格子（gap ≥ 0.12）才认 —— 同一个角色一页只出现一次。
+        # 不能再放宽到 0.72：实测「别的角色」最高能到 0.787（623 模板碰 713 的格子
+        # 正好 0.787），2026-10-23 现场就是 0.771 被放过、点成了别的角色。
         ok = best >= th or (best >= th_low and (best - second) >= gap_min)
+        if ok:
+            reason = "命中"
+        elif 0.70 <= best < th_low:
+            reason = f"未命中（{best:.3f} 属相近角色/遮挡区，一律不认，避免点错人）"
+        else:
+            reason = "未命中"
         print(f"[MasterPick] 扫描 c{col}r{row}k{k}: 最佳 {best:.3f} @ {best_cell}"
-              f"（次佳格 {second:.3f}，差 {best - second:.3f}）→ "
-              f"{'命中' if ok else '未命中'}", flush=True)
+              f"（次佳格 {second:.3f}，差 {best - second:.3f}）→ {reason}", flush=True)
         return best_cell if ok else None
 
     @classmethod
@@ -876,6 +908,49 @@ class MasterPick(CustomAction):
                         print(f"[MasterPick] 选人页已出现（1P 标签 {mx:.3f}）", flush=True)
                         return True
             time.sleep(1.0)
+        return False
+
+    def _wait_pick_phase(self, ctrl, param) -> bool:
+        """等「选用阶段」真的开始（判据：底部橙字「温馨提示：请选择格斗家」）。
+
+        2026-10-23 现场（v1.2.4）：禁用阶段点完「确定」后立刻去点角色，结果 9s 内
+        所有点击都没反应（勾不出现），前几个输入全被跳过，其中一轮还拖到倒计时归零
+        变成 0/3 全靠游戏随机。原因是点确定只代表我方完成，游戏要等对手也确认禁用
+        才切进选用阶段，这段等待期（实测 1.7~17.7s）点格子是空转。
+        现在禁用不点确定，靠这个提示确认阶段真的切过来了再开始点。
+        模板取自录屏 1280 基准底部居中（x 584~682 / y 658~684）：
+        285 帧里只有 10 帧命中（就是选用阶段那几秒），正例 0.986~1.000、反例 ≤0.359。
+        """
+        tpl = self._load_rel("master_pick_tip")
+        if tpl is None:
+            print("[MasterPick] 缺少模板 master_pick_tip.png，直接开始选用", flush=True)
+            return True
+        th = float(param.get("pick_phase_threshold", 0.75))
+        rx, ry, rw, rh = param.get("pick_phase_roi", [520, 645, 240, 70])
+        deadline = time.time() + float(param.get("pick_phase_timeout", 30))
+        t0 = time.time()
+        miss = 0
+        while time.time() < deadline:
+            bgr = self._grab_bgr(ctrl)
+            if bgr is not None:
+                gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+                H, W = gray.shape[:2]
+                patch = gray[max(0, ry):min(H, ry + rh), max(0, rx):min(W, rx + rw)]
+                if patch.shape[0] >= tpl.shape[0] and patch.shape[1] >= tpl.shape[1]:
+                    r = cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED)
+                    _, mx, _, _ = cv2.minMaxLoc(r)
+                    if float(mx) >= th:
+                        print(f"[MasterPick] 选用阶段已开始（温馨提示 {mx:.3f}，"
+                              f"等了 {time.time() - t0:.1f}s）", flush=True)
+                        return True
+            miss += 1
+            if miss % 3 == 0 and self._left_pick_page(ctrl, param):
+                print("[MasterPick] 等选用阶段期间选人页已消失", flush=True)
+                self._left_page = True
+                return False
+            time.sleep(0.4)
+        print(f"[MasterPick] 等选用阶段超时（{param.get('pick_phase_timeout', 30)}s）",
+              flush=True)
         return False
 
     def _left_pick_page(self, ctrl, param) -> bool:
