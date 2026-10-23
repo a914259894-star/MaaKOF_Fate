@@ -45,7 +45,21 @@
                 109
             ],
             "wrong_settle_ms": 1200,
-            "wrong_max_layers": 12
+            "wrong_max_layers": 12,
+            "team_roi": [
+                380,
+                20,
+                560,
+                90
+            ],
+            "team_threshold": 0.9,
+            "home_threshold": 0.85,
+            "home_roi": [
+                0,
+                0,
+                0,
+                0
+            ]
         },
         "timeout": 960000,
         "next": [
@@ -53,6 +67,7 @@
             "Fight_Lose",
             "Arena_MainPage",
             "Arena_MasterPage",
+            "Arena_HomePage",
             "Arena_UnknownBack"
         ]
     },

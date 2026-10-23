@@ -117,22 +117,27 @@ class CombatFighter(CustomAction):
         "settle_threshold": 0.8,       // 结算元素阈值（命中则不点返回）
         // —— 大师团页快速收手（2026-10-23 v1.2.6） ——
         "team_roi": [380, 20, 560, 90], // master_title（大师竞技横幅）所在位置
-        "team_threshold": 0.9          // 该 ROI 内命中即判定已回到大师团页
+        "team_threshold": 0.9,         // 该 ROI 内命中即判定已回到大师团页
+        // —— 主城兜底（2026-10-23 v1.2.7） ——
+        "home_threshold": 0.85,        // 主城「KO 竞技」图标（main_arena_btn）阈值
+        "home_roi": [0, 0, 0, 0]       // 0 = 全屏找（主城图标位置随 UI 版本会变）
     }
 
-    退出设计（2026-10-22 定稿）：盲点速度快，可能误点进竞技场的子界面且多层嵌套。
-    每 result_interval 秒检查一次当前画面：
+    退出设计（2026-10-22 定稿，2026-10-23 v1.2.7 修正）：盲点速度快，可能误点进
+    竞技场的子界面且多层嵌套。每 result_interval 秒检查一次当前画面：
       ① 玩家详情弹窗 → 点 X 关闭（回排行榜）
       ② 排行榜 / 至尊赛 / 商城 → 点右上返回
       ①②循环处理嵌套（最多 wrong_max_layers 层）；
       ③ 全部未命中且识别到竞技场主页面（arena_title / 大师团页 master_title）→
-        收手 break，交还流水线进下一轮；
-      ④ 无误点且非主页面 → 检查失败结算文字（只查 lose），命中 break 交还 Fight_Lose
+        收手 break，交还流水线进下一轮；**2s 复核失败也一样收手**（v1.2.7：
+        复核失败说明画面被残留点击带走了，人已经不在战斗里，绝不能恢复盲点）；
+      ④ 识别到主城（main_arena_btn）→ 收手 break，交给流水线点「竞技」重进；
+      ⑤ 无误点且非上述页面 → 检查失败结算文字（只查 lose），命中 break 交还 Fight_Lose
         → Arena_SettleOk 点确认（失败结算画面盲点点不掉，v1.1.3 实测卡死 900s 的教训；
         胜利结算盲点自己会点掉回主界面，不查 win）；
-      ⑤ 画面连续 stall_checks 次几乎不动、又不是上面任何一种（如装备页）→ 未知界面
+      ⑥ 画面连续 stall_checks 次几乎不动、又不是上面任何一种（如装备页）→ 未知界面
         兜底：点右上红色返回箭头自救（v1.2.2，最多 stall_max 次）；
-      ⑥ 都未命中 → 还在战斗，继续盲点。
+      ⑦ 都未命中 → 还在战斗，继续盲点。
 
     大师团页特例（v1.2.6）：胜利后残留盲点会落到大师团页——那页 1137,632 正好是
     「匹配战斗」、981,643 正好是「一键上阵」，会盲点掉底部角色行的上阵角色。那页
@@ -217,6 +222,12 @@ class CombatFighter(CustomAction):
                     # 上阵角色点掉。判得越早越少误点，所以每轮都查（小 ROI，很便宜）。
                     if self._team_page_hit(gray, param):
                         print("[CombatFighter] 已回到大师团页（胜利后盲点退回），立即停手",
+                              flush=True)
+                        break
+                    # 主城兜底（v1.2.7）：返回键多按了掉进主城，主城底部是装备/副本等
+                    # 导航，盲点一砸就进装备页。认出来立刻收手，交给流水线重进竞技场。
+                    if self._home_page_hit(gray, param):
+                        print("[CombatFighter] 检测到主城界面（返回键多按了），立即停手",
                               flush=True)
                         break
 
@@ -361,6 +372,29 @@ class CombatFighter(CustomAction):
         return False
 
     @classmethod
+    def _home_page_hit(cls, gray, param) -> bool:
+        """主城界面判定（v1.2.7）：主城上的「KO 竞技」入口图标（main_arena_btn）。
+
+        为什么需要它：误点退出的返回键点多了会一路退到主城。主城没有竞技场标题、
+        也没有结算元素，旧代码会当成「还在战斗」继续盲点——主城底部就是装备/副本/
+        招募这些导航，盲点一砸就进装备页（现场 18:17 那一串的由来）。
+
+        认出主城 → 立刻收手，交给流水线 Arena_Enter_1v1 点「竞技」重进，形成兜底。
+
+        只做「高阈值 + 全屏」：主城图标位置随 UI 版本会变，写死 ROI 不划算；
+        阈值 0.85 比节点里的 0.7 更严，避免在竞技场页误命中（真误命中也无害：
+        竞技场页有 arena_title，流水线会先走 Arena_MainPage）。
+        """
+        tpl = cls._load_tpl("main_arena_btn")
+        if tpl is None:
+            return False
+        th = float(param.get("home_threshold", 0.85))
+        roi = tuple(int(v) for v in param.get("home_roi", [0, 0, 0, 0]))
+        if roi[2] <= 0 or roi[3] <= 0:
+            roi = (0, 0, gray.shape[1], gray.shape[0])
+        return cls._match_score(gray, tpl, roi) >= th
+
+    @classmethod
     def _main_page_hit(cls, gray, threshold: float) -> bool:
         """竞技场主界面判定：1v1 竞技区主页（arena_title）或大师竞技页（master_title）。
 
@@ -378,10 +412,19 @@ class CombatFighter(CustomAction):
 
     @classmethod
     def _escape_misnav(cls, ctrl, gray, param) -> bool:
-        """处理误点嵌套：逐层退出直到回到竞技场主界面。
+        """处理误点嵌套：逐层退出直到回到竞技场/主城这类「已经离开战斗」的页面。
 
-        返回 True = 已回主界面（调用方 break 进下一轮）；
-        返回 False = 不在误点界面且不是主界面（还在战斗，继续盲点）。
+        返回 True = 已离开战斗（调用方 break，把后续交给流水线）；
+        返回 False = 还在战斗，继续盲点。
+
+        v1.2.7 修正（现场 18:16:45~18:17:11）：
+          原来主界面「2s 复核」失败后会 return False 恢复盲点，那一下是灾难起点——
+          人已经在竞技场页了，恢复盲点等于在竞技场页面上乱按（商城/排行榜/至尊赛
+          入口全在这一页），于是「退出→又被点进去→再退出」反复循环；多按几次返回
+          就掉进主城，主城底部导航被盲点砸中 → 点进装备页 → 继续乱点。
+          现在：复核失败 = 画面被残留点击带走了，说明已经离开战斗 → 一样收手，
+          剩下的交给流水线（Arena_MainPage / Arena_Enter_1v1 / Arena_UnknownBack
+          都会一步步认页面，比盲点可靠得多，也不会再点进别的页）。
         """
         wrong_th = float(param.get("wrong_threshold", 0.85))
         main_th = float(param.get("main_threshold", 0.8))
@@ -403,17 +446,25 @@ class CombatFighter(CustomAction):
                     print("[CombatFighter] 检测到竞技场主界面，等待 2s 复核（防残留点击/转场误判）", flush=True)
                     time.sleep(2.0)
                     if not _shot(ctrl):
-                        return False
+                        return True
                     img2 = ctrl.cached_image
                     if img2 is None:
-                        return False
-                    if cls._main_page_hit(cls._to_gray_1280(img2), main_th):
+                        return True
+                    gray2 = cls._to_gray_1280(img2)
+                    if cls._main_page_hit(gray2, main_th):
                         print("[CombatFighter] 复核通过（已离开战斗），停止出招进下一轮", flush=True)
                         return True
-                    # 复核失败：画面被残留点击切走（如装备页），继续循环当误点处理
-                    print("[CombatFighter] 复核失败（画面已被切走），继续处理", flush=True)
-                    gray = cls._to_gray_1280(img2)
-                    continue
+                    # 复核失败：画面被残留点击带去了别的页 → 一样算「已离开战斗」，
+                    # 坚决不恢复盲点（恢复了就是在竞技场页上乱按，会点进商城/排行榜/至尊赛）。
+                    print("[CombatFighter] 复核失败（画面已被残留点击带走），"
+                          "仍按已离开战斗处理：停止出招，交给流水线认页面", flush=True)
+                    return True
+                if cls._home_page_hit(gray, param):
+                    # 主城兜底（v1.2.7）：返回键多按了几次会掉到主城，那页底部是
+                    # 装备/副本等导航，盲点会直接点进装备页 → 这里认出主城就收手。
+                    print("[CombatFighter] 检测到主城界面（返回键多按了），立即停手，"
+                          "交给流水线点「竞技」重进", flush=True)
+                    return True
                 return False
             name, act = hit
             x, y = close_xy if act == "close" else back_xy
@@ -427,8 +478,8 @@ class CombatFighter(CustomAction):
             if img is None:
                 return False
             gray = cls._to_gray_1280(img)
-        print(f"[CombatFighter] 连退 {max_layers} 层仍未回主界面，放弃（防死循环），继续观察", flush=True)
-        return False
+        print(f"[CombatFighter] 连退 {max_layers} 层仍未回主界面，放弃（防死循环），收手交给流水线", flush=True)
+        return True
 
     # ================== 未知界面兜底（2026-10-23 v1.2.2） ==================
     #
@@ -638,4 +689,46 @@ class CombatPressKey(CustomAction):
             key,
             hold_ms=int(param.get("hold_ms", 80)),
         )
+        return True
+
+
+class ArenaSafeBack(CustomAction):
+    """流水线兜底返回键（v1.2.7）：只在「确实还停在子页面」时才点返回。
+
+    原来 `Arena_UnknownBack` 是 DirectHit + Click，无条件点一次右上返回——这就是
+    「返回键多按了、一路退到主城」的元凶：只要 next 里没有节点命中（例如竞技场页
+    正在做转场动画、arena_title 暂时没认出来），它就再点一次返回，于是
+    竞技场 → 主城 → 主城底部导航（盲点顺手点进装备）……
+
+    现在改成自定义动作：
+      · 已经在竞技场页 / 大师团页 / 主城 → **不点**，直接放行，让 next 里的
+        Arena_MainPage / Arena_MasterPage / Arena_HomePage 去接管；
+      · 认出别的子页面（至尊赛/排行榜/商城/装备页…）→ 才点一次返回。
+    点返回的位置优先用红色箭头识别（_find_red_back），识别不到才用 back_xy。
+
+    custom_action_param：{"back_xy": [1244,28], "home_threshold": 0.85}
+    """
+
+    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
+        param = json.loads(argv.custom_action_param) if argv.custom_action_param else {}
+        ctrl = context.tasker.controller
+        _shot(ctrl)
+        img = ctrl.cached_image
+        if img is None or not getattr(img, "size", 0):
+            print("[SafeBack] 截图失败，跳过返回", flush=True)
+            return True
+        gray = CombatFighter._to_gray_1280(img)
+
+        main_th = float(param.get("main_threshold", 0.8))
+        if CombatFighter._main_page_hit(gray, main_th):
+            print("[SafeBack] 已在竞技场/大师页，不点返回（交给 next 接手）", flush=True)
+            return True
+        if CombatFighter._home_page_hit(gray, param):
+            print("[SafeBack] 已在主城，不点返回（交给 Arena_HomePage 重新进竞技场）", flush=True)
+            return True
+
+        back_xy = param.get("back_xy", [1244, 28])
+        pos = CombatFighter._find_red_back(img) or (int(back_xy[0]), int(back_xy[1]))
+        print(f"[SafeBack] 停在未知子页面，点返回 {pos}", flush=True)
+        ctrl.post_click(int(pos[0]), int(pos[1])).wait()
         return True

@@ -11,6 +11,7 @@ from combat_actions import (
     CombatMove,
     CombatNormalAttack,
     CombatPressKey,
+    ArenaSafeBack,
 )
 from combat_recognition import CombatAlwaysHit, SkillReadyBright
 from farm_actions import FarmTap
@@ -26,6 +27,7 @@ CUSTOM_ACTIONS = [
     ("ArenaPick", ArenaPick()),
     ("MasterPick", MasterPick()),  # 大师竞技场选人（先禁用后选用）
     ("MasterTeamFix", MasterTeamFix()),  # 大师团页：补回被盲点误点下阵的角色
+    ("ArenaSafeBack", ArenaSafeBack()),  # 兜底返回：已离开战斗就不点返回
 ]
 
 CUSTOM_RECOGNITIONS = [
