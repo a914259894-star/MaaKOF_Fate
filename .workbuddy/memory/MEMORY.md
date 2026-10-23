@@ -33,6 +33,13 @@
 - **角色匹配可行**：1v1 `roles/c{栏}r{行}k{列}.png`（78×78）**直接在 99×99 格内滑动** TM_CCOEFF_NORMED 即 0.96~0.99。禁止把格子裁剪后 resize 到 78（v1.2.0 因此误判"角色池不重叠"）。角标/勾/徽章会压到 0.58~0.78，用双判据：≥0.86 或（≥0.72 且比次佳格高 ≥0.12）。
 - 选人策略（用户要求）：禁用**只要 2 个**、选用**只要 3 个**；输入按顺序优先，凑够即停；多填的输入位是备选；全试完仍凑不齐才从第 1 格兜底补齐。
 
+## 日志与 interface.json 规范（2026-10-23，v1.2.3）
+- **所有 agent 里的 print 必须带 `flush=True`**：宿主用管道拉起 agent，stdout 是块缓冲（4KB~8KB），日志会攒成一坨（现场见过 40s 输出同一个时间戳），进程崩溃还会丢缓冲内容。`assets/agent/main.py` 与根 `main.py` 已 `reconfigure(line_buffering=True)` 兜底。
+- **interface.json 改完必须过 `deps/tools/interface.schema.json`**（venv 已装 jsonschema）：
+  `python -c "import json,jsonschema; jsonschema.validate(json.load(open('assets/interface.json',encoding='utf-8')), json.load(open('deps/tools/interface.schema.json',encoding='utf-8')))"`
+  踩过：**option 不支持 `default_check`**（只有 taskItem 支持，schema additionalProperties=false）——之前「大师选人栏位」带着它，已删；选项只要被 task 的 `option` 数组引用就会显示，不需要 default_check。
+- input 选项每个 `inputs[]` 支持自己的 `description`（会显示成字段旁的问号提示），长说明应放 option.description / input.description，**不要堆在 label 括号里**（会把文本框挤没）。
+
 ## 协作偏好
 - base pipeline 参数保持 MAAFramework 规范默认值（如 quick_pick:true），个性化由 interface.json 选项 override 覆盖，不要改 base 默认。
 - MaaDebugger v1.17 是裸流水线调试器：不渲染 select/input 选项，用 Pipeline Override JSON 注参。**它完全不会读 interface.json、也不会拉起 agent**（源码 grep 无 interface/child_exec）——Agent Identifier 的 CONNECT 只是创建带该 identifier 的监听端并等 5s（`set_timeout(5000)`），必须先在终端手动跑 `assets> libs\python\python.exe agent\main.py <identifier>`（identifier 用输入框里那个，持久保存在 STORAGE），agent 存活期间点 CONNECT 才能连上。

@@ -153,9 +153,9 @@ class ArenaPick(CustomAction):
     def _quick(self, ctrl, param) -> bool:
         targets = param.get("quick_targets", [[94, 98], [94, 206], [94, 315]])
         if len(targets) != 3:
-            print("[ArenaPick] quick_targets 必须是 3 个 [x,y]")
+            print("[ArenaPick] quick_targets 必须是 3 个 [x,y]", flush=True)
             return False
-        print("[ArenaPick] 快速选人：点近期使用最左一列 3 人（上→下）")
+        print("[ArenaPick] 快速选人：点近期使用最左一列 3 人（上→下）", flush=True)
         # 慢环境优化：agent↔宿主图像传输可能降级（空图/单次数十秒），
         # 点击一律"发完就走"不等回执；先三人各点 1 次，再限时验证补漏。
         for x, y in targets:
@@ -167,12 +167,12 @@ class ArenaPick(CustomAction):
             # 一个勾 = 一个角色选上：验证每个目标格是否有勾
             flags = [self._cell_has_check(ctrl, x, y, param) for x, y in targets]
             if all(flags):
-                print(f"[ArenaPick] [OK] 快速选人 3 格全部有勾 {flags}")
+                print(f"[ArenaPick] [OK] 快速选人 3 格全部有勾 {flags}", flush=True)
                 return True
             # 只对无勾的格子补点；有勾的绝不再点（否则 toggle 掉）
             for (x, y), ok in zip(targets, flags):
                 if not ok:
-                    print(f"[ArenaPick] 补点 左列 ({x},{y})（当前勾 {flags}）")
+                    print(f"[ArenaPick] 补点 左列 ({x},{y})（当前勾 {flags}）", flush=True)
                     ctrl.post_click(int(x), int(y))
                     time.sleep(0.35)
             time.sleep(0.5)
@@ -185,7 +185,7 @@ class ArenaPick(CustomAction):
         # 或 arena.json 直接写的数组 [[栏,行,列], ...]
         picks = self._parse_picks(param.get("picks"))
         if not picks or len(picks) != 3:
-            print(f"[ArenaPick] picks 必须是 3 个 [栏,行,列]，收到：{param.get('picks')}")
+            print(f"[ArenaPick] picks 必须是 3 个 [栏,行,列]，收到：{param.get('picks')}", flush=True)
             return False
         roi = param.get("roi", [0, 0, 1280, 370])
         threshold = float(param.get("threshold", 0.72))
@@ -197,14 +197,14 @@ class ArenaPick(CustomAction):
         bad = [p for p in picks if 4 <= p[0] <= 7]
         if bad:
             print(f"[ArenaPick] 仅支持首页(栏1~3)与末页(栏8~10)，"
-                  f"栏4~7 不允许：{bad}（请在 UI 改成首页或末页栏位）")
+                  f"栏4~7 不允许：{bad}（请在 UI 改成首页或末页栏位）", flush=True)
             return False
         # 三组栏位可以「全首页」「全末页」或「混合」，按栏位自动决定要不要翻页。
         # v1.1.10 曾强制要求首页+末页各 ≥1 个，导致用户配 8,2,2;9,3,1;9,3,3
         # （全末页）时一进选人页就 return False → 整任务停止，已修正。
         front = [p for p in picks if p[0] <= 3]
         back = [p for p in picks if p[0] >= 8]
-        print(f"[ArenaPick] 选人栏位 = {picks} → 首页{[p[0] for p in front]} / 末页{[p[0] for p in back]}")
+        print(f"[ArenaPick] 选人栏位 = {picks} → 首页{[p[0] for p in front]} / 末页{[p[0] for p in back]}", flush=True)
 
         done, failed = 0, []
 
@@ -222,39 +222,39 @@ class ArenaPick(CustomAction):
         # 2) 有末页角色才翻页：一次性拖到末页（拖到拖不动为止）
         if back:
             n_drags = self._drag_to_end(ctrl, swipe, max_drags=last_drags)
-            print(f"[ArenaPick] 已拖到末页（实际拖拽 {n_drags} 次）")
+            print(f"[ArenaPick] 已拖到末页（实际拖拽 {n_drags} 次）", flush=True)
             for pick in back:
                 _take(pick)
 
         # 单个角色没找到不再直接整任务失败（v1.1.10 之前那样会让任务一停到底），
         # 至少选上 1 个就继续点确定，剩下的交给游戏倒计时自动锁定。
         if done == 0:
-            print(f"[ArenaPick] [X] 3 个角色一个都没选上：{failed}")
+            print(f"[ArenaPick] [X] 3 个角色一个都没选上：{failed}", flush=True)
             return False
         if failed:
             print(f"[ArenaPick] [!] {len(failed)} 个角色未选上 {failed}，"
-                  f"已选 {done}/3，继续点确定（倒计时归零游戏会自动锁定阵容）")
+                  f"已选 {done}/3，继续点确定（倒计时归零游戏会自动锁定阵容）", flush=True)
         return True
 
     def _pick_one(self, ctrl, pick, idx, roi, threshold, param) -> bool:
         """选单个角色：找模板 → 点击 → 等勾出现。失败返回 False。"""
         col, row, k = pick
         if not (1 <= col <= 10 and 1 <= row <= 3 and 1 <= k <= 3):
-            print(f"[ArenaPick] 栏仅 1~10、行/列 1~3，收到 {pick}")
+            print(f"[ArenaPick] 栏仅 1~10、行/列 1~3，收到 {pick}", flush=True)
             return False
         name = f"c{col}r{row}k{k}"
         tpl = self._load_template(name)
         if tpl is None:
-            print(f"[ArenaPick] 找不到模板 roles/{name}.png")
+            print(f"[ArenaPick] 找不到模板 roles/{name}.png", flush=True)
             return False
         hit = self._find_role(ctrl, tpl, roi, threshold, tag=name,
                               retries=param.get("find_retries", 3),
                               retry_gap=float(param.get("find_retry_gap", 0.8)))
         if hit and self._click_until_check(
                 ctrl, hit[0], hit[1], idx, param, tag=name):
-            print(f"[ArenaPick] [OK] 已选 {name}")
+            print(f"[ArenaPick] [OK] 已选 {name}", flush=True)
             return True
-        print(f"[ArenaPick] {name} 未找到/未选上")
+        print(f"[ArenaPick] {name} 未找到/未选上", flush=True)
         return False
 
     def _drag_to_end(self, ctrl, swipe, max_drags: int = 8) -> int:
@@ -273,12 +273,12 @@ class ArenaPick(CustomAction):
             if prev is not None and now is not None and self._sig_similar(prev, now):
                 stuck += 1
                 if stuck >= 2:
-                    print(f"[ArenaPick] 选人区域连续 {stuck} 次无变化，已到末页（第 {n} 次拖拽）")
+                    print(f"[ArenaPick] 选人区域连续 {stuck} 次无变化，已到末页（第 {n} 次拖拽）", flush=True)
                     return n
             else:
                 stuck = 0
             prev = now
-        print(f"[ArenaPick] 达到拖拽上限 {max_drags}，按末页处理")
+        print(f"[ArenaPick] 达到拖拽上限 {max_drags}，按末页处理", flush=True)
         return n
 
     @classmethod
@@ -391,11 +391,11 @@ class ArenaPick(CustomAction):
                 cy = max(0, ry) + maxloc[1] + th // 2
                 if tag:
                     print(f"[ArenaPick] {tag}: 命中 {maxv:.3f} @ ({cx},{cy})"
-                          + (f"（第 {attempt + 1} 次截图）" if attempt else ""))
+                          + (f"（第 {attempt + 1} 次截图）" if attempt else ""), flush=True)
                 return (cx, cy)
             if tag:
                 print(f"[ArenaPick] {tag}: 未命中 {maxv:.3f} / {threshold}"
-                      + (f"，重试 {attempt + 1}/{retries - 1}" if attempt < retries - 1 else ""))
+                      + (f"，重试 {attempt + 1}/{retries - 1}" if attempt < retries - 1 else ""), flush=True)
             time.sleep(retry_gap)
         return None
 
@@ -432,7 +432,7 @@ class ArenaPick(CustomAction):
         score = cv2.matchTemplate(bw, tpl, cv2.TM_CCOEFF_NORMED)
         ms = float(score.max())
         if ms >= th:
-            print(f"[ArenaPick] 勾判定 [OK] {ms:.2f} @({int(cx)},{int(cy)})")
+            print(f"[ArenaPick] 勾判定 [OK] {ms:.2f} @({int(cx)},{int(cy)})", flush=True)
             return True
         return False
 
@@ -446,14 +446,14 @@ class ArenaPick(CustomAction):
         若点击前该格已有勾（重复运行等），直接认定已选上、不再点击。
         """
         if cls._cell_has_check(ctrl, x, y, param):
-            print(f"[ArenaPick] [OK] {tag} {idx}号位已有勾（免点）")
+            print(f"[ArenaPick] [OK] {tag} {idx}号位已有勾（免点）", flush=True)
             return True
         max_clicks = max(1, int(param.get("click_max_tries", 3)))
         miss_need = max(1, int(param.get("miss_confirm", 2)))
         timeout = float(param.get("check_timeout", 5))
         for attempt in range(max_clicks):
             word = "点击" if attempt == 0 else f"补点第 {attempt} 次"
-            print(f"[ArenaPick] {tag}: {idx}号位{word} ({x},{y})")
+            print(f"[ArenaPick] {tag}: {idx}号位{word} ({x},{y})", flush=True)
             ctrl.post_click(int(x), int(y)).wait()
             time.sleep(0.4)
             # 等勾出现：连续 miss_need 次无勾才判定失败
@@ -461,13 +461,13 @@ class ArenaPick(CustomAction):
             deadline = time.time() + timeout
             while time.time() < deadline:
                 if cls._cell_has_check(ctrl, x, y, param):
-                    print(f"[ArenaPick] [OK] {tag} {idx}号位已选上（共点 {attempt + 1} 次）")
+                    print(f"[ArenaPick] [OK] {tag} {idx}号位已选上（共点 {attempt + 1} 次）", flush=True)
                     return True
                 miss += 1
                 if miss >= miss_need:
                     break
                 time.sleep(0.5)
-        print(f"[ArenaPick] [X] {tag}: 点了 {max_clicks} 次仍无勾（勾判定异常或页面不对）")
+        print(f"[ArenaPick] [X] {tag}: 点了 {max_clicks} 次仍无勾（勾判定异常或页面不对）", flush=True)
         return False
 
     @staticmethod

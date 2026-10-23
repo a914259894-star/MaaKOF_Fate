@@ -16,18 +16,23 @@ import sys
 # 故显式把 main.py 所在目录（assets/agent）塞进 path，保证 import register / 同目录模块能找到。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# —— 关键修复：强制 stdout/stderr 为 UTF-8 ——
+# —— 关键修复：强制 stdout/stderr 为 UTF-8 + 行缓冲 ——
 # 中文 Windows 下 Python 默认用 GBK 编码 stdout；agent 日志里打印的 ✓/✗/⚠ 等符号
 # 不在 GBK 字符集，会抛 UnicodeEncodeError 并被 maafw 的 ctypes 回调"Exception ignored"吞掉，
 # 导致 CustomAction 中途崩溃（例如只选完第 1 个角色就跳到战斗）。无论宿主如何启动本进程，
 # 都在此处把编码重设为 UTF-8（errors=replace 保证任何字符都不会再炸）。
+# line_buffering=True：宿主是用管道拉起本进程的，管道下 stdout 默认走块缓冲（4KB~8KB），
+# 日志会攒成一坨才吐（现场见过 40 秒的输出全打同一个时间戳），进程异常退出时缓冲内容还会
+# 直接丢失。改成行缓冲后每写一行就落盘，配合各处 print(flush=True) 双保险。
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 except (AttributeError, ValueError, OSError):
     import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8",
+                                  errors="replace", line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8",
+                                  errors="replace", line_buffering=True)
 
 from maa.agent.agent_server import AgentServer
 from maa.toolkit import Toolkit

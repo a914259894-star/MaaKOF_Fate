@@ -27,6 +27,14 @@ import sys
 
 import cv2
 
+# 输出重定向到文件/管道时 Python 默认块缓冲（攒满 4KB~8KB 才写），日志时间戳会失真、
+# 崩溃时还会丢缓冲内容；这里统一改成 UTF-8 + 行缓冲（与 assets/agent/main.py 一致）。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+except (AttributeError, ValueError, OSError):
+    pass
+
 # 自定义模块在 assets/agent/ 下（本工程约定：agent 目录在 assets/ 下）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "agent"))
 
