@@ -199,25 +199,41 @@ class ArenaPick(CustomAction):
             print(f"[ArenaPick] 仅支持首页(栏1~3)与末页(栏8~10)，"
                   f"栏4~7 不允许：{bad}（请在 UI 改成首页或末页栏位）")
             return False
-        front = sorted([p for p in picks if p[0] <= 3], key=lambda p: p[0])
-        back = sorted([p for p in picks if p[0] >= 8], key=lambda p: p[0])
-        if not front or not back:
-            print(f"[ArenaPick] 选人栏位必须同时含首页(1~3)与末页(8~10)各 ≥1 个：{picks}")
-            return False
-
+        # 三组栏位可以「全首页」「全末页」或「混合」，按栏位自动决定要不要翻页。
+        # v1.1.10 曾强制要求首页+末页各 ≥1 个，导致用户配 8,2,2;9,3,1;9,3,3
+        # （全末页）时一进选人页就 return False → 整任务停止，已修正。
+        front = [p for p in picks if p[0] <= 3]
+        back = [p for p in picks if p[0] >= 8]
         print(f"[ArenaPick] 选人栏位 = {picks} → 首页{[p[0] for p in front]} / 末页{[p[0] for p in back]}")
 
-        # 1) 先选首页全部角色（不拖）
-        for i, pick in enumerate(front, 1):
-            if not self._pick_one(ctrl, pick, i, roi, threshold, param):
-                return False
+        done, failed = 0, []
 
-        # 2) 一次性拖到末页（拖到拖不动为止），再选末页全部角色
-        n_drags = self._drag_to_end(ctrl, swipe, max_drags=last_drags)
-        print(f"[ArenaPick] 已拖到末页（实际拖拽 {n_drags} 次）")
-        for i, pick in enumerate(back, len(front) + 1):
-            if not self._pick_one(ctrl, pick, i, roi, threshold, param):
-                return False
+        def _take(pick):
+            nonlocal done
+            if self._pick_one(ctrl, pick, done + 1, roi, threshold, param):
+                done += 1
+            else:
+                failed.append(pick)
+
+        # 1) 首页角色（当前就在首页，不拖）
+        for pick in front:
+            _take(pick)
+
+        # 2) 有末页角色才翻页：一次性拖到末页（拖到拖不动为止）
+        if back:
+            n_drags = self._drag_to_end(ctrl, swipe, max_drags=last_drags)
+            print(f"[ArenaPick] 已拖到末页（实际拖拽 {n_drags} 次）")
+            for pick in back:
+                _take(pick)
+
+        # 单个角色没找到不再直接整任务失败（v1.1.10 之前那样会让任务一停到底），
+        # 至少选上 1 个就继续点确定，剩下的交给游戏倒计时自动锁定。
+        if done == 0:
+            print(f"[ArenaPick] [X] 3 个角色一个都没选上：{failed}")
+            return False
+        if failed:
+            print(f"[ArenaPick] [!] {len(failed)} 个角色未选上 {failed}，"
+                  f"已选 {done}/3，继续点确定（倒计时归零游戏会自动锁定阵容）")
         return True
 
     def _pick_one(self, ctrl, pick, idx, roi, threshold, param) -> bool:
@@ -484,36 +500,46 @@ class MasterPick(CustomAction):
       - 顺序确认页无需任何操作（倒计时结束自动进战斗），只作为选人结束的保底判断。
 
     栏位含义与 1v1 完全一致：(栏, 行, 列) → roles/c{栏}r{行}k{列}.png。
-    扫描 = 用该模板在 15 个格子里找最像的一格；找不到（角色池不同/该角色不在
-    当前页）则走兜底：从第 1 格开始依次点，直到出现禁用标/白勾为止。
+    大师页角色头像与 1v1 用的是同一套美术资源，78×78 模板在 99×99 格内滑动匹配
+    实测 0.96~0.99，所以「精确找角色」是走得通的（v1.2.0 因裁剪 resize 失真才
+    误判成角色池不同）。真找不到时才走兜底：从第 1 格开始依次点。
 
     custom_action_param：
     {
-        "ban_picks":  "1,1,1;2,1,1;3,1,1",   // 3 个禁用栏位，000=放空
-        "pick_picks": "1,1,1;2,1,1;3,1,1;4,1,1;5,1,1",  // 5 个选用栏位
-        "ban_count": 3, "pick_count": 3,
-        "role_threshold": 0.62,   // 扫描命中阈值（跨页角色池不同，不能太高）
+        "ban_picks":  "1,1,1;1,1,2;1,1,3",   // 禁用：需要 2 个，可多填作备选，000=放空
+        "pick_picks": "1,1,1;1,1,2;1,1,3;...",  // 选用：需要 3 个，可多填作备选
+        "ban_count": 2, "pick_count": 3,     // 每阶段要凑够的个数
+        "role_threshold": 0.86,   // 角色模板命中阈值（实测命中 0.96~0.99）
+        "role_threshold_low": 0.72, "role_gap": 0.12,
+        // 角标/勾/徽章会把分数压到 0.7~0.8（实测 2P 角标 0.776）；
+        // 分数不够高时，只要比其余格子高出 role_gap 也认（同角色一页只出现一次）。
         "ban_threshold": 0.60,    // 禁用标判定
         "check_threshold": 0.55,  // 白勾判定
         "confirm_xy": [622, 638], // 「确定」按钮（与 1v1 同位置）
         "pick_page_timeout": 60,  // 等选人页出现的秒数
         "confirm_wait": 6         // 点确定前最多等按钮出现的秒数
     }
+
+    选人策略（用户 2026-10-23 现场确认）：
+      1. 按输入顺序逐个用 1v1 角色模板扫描，凑齐 need 个（禁用 2 / 选用 3）立即停；
+      2. 输入栏位都试完仍凑不齐，才「从第 1 格开始依次点」兜底补齐；
+      3. 多出来的输入位是备选，不会被强行点掉。
     """
 
     # 1280 基准网格（从 1920x1080 录屏帧缩放后边缘检测标定）
+    # 布局固定为 6 列 × 2 行 + 第 3 行 3 格 = 15 个角色（第 3 行右侧 3 格是背景）
     COLS = (90, 202, 313, 478, 590, 701)
     ROWS = (19, 128, 237)
     CELL = 99
     ROLE_SIZE = 78           # 与 roles/*.png 同尺寸
-    # 跨页匹配的多裁剪（1v1 模板是 78×78 的整格头像，大师格 99×99 含边框/星级）
-    _CROPS = (
-        ("full", (0, 99, 0, 99)),
-        ("c83", (8, 91, 8, 91)),
-        ("c73", (13, 86, 13, 86)),
-        ("c66", (16, 82, 16, 82)),
-        ("top", (3, 96, 2, 85)),
-    )
+
+    @classmethod
+    def _cells(cls):
+        """(列, 行) 遍历全部 15 个角色格（第 3 行只有左边 3 格有角色）。"""
+        for ri in range(1, 4):
+            n = 6 if ri < 3 else 3
+            for ci in range(1, n + 1):
+                yield ci, ri
 
     # ---------------- 主流程 ----------------
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
@@ -540,12 +566,14 @@ class MasterPick(CustomAction):
     def _run_phase(self, ctrl, param, ban: bool) -> bool:
         tag = "禁用" if ban else "选用"
         key = "ban_picks" if ban else "pick_picks"
-        need = int(param.get("ban_count" if ban else "pick_count", 3))
-        refs = self._parse_refs(param.get(key), need)
-        print(f"[MasterPick] --- {tag}阶段 目标={refs} 需 {need} 个 ---", flush=True)
+        need = int(param.get("ban_count" if ban else "pick_count", 2 if ban else 3))
+        refs = self._parse_refs(param.get(key))
+        shown = ["000" if r is None else ",".join(str(v) for v in r) for r in refs]
+        print(f"[MasterPick] --- {tag}阶段 需凑 {need} 个，输入 {shown} ---", flush=True)
 
         done = 0
         used = set()
+        # 1) 按输入顺序找：命中就点，凑齐 need 立刻停（先输入的优先）
         for ref in refs:
             if done >= need:
                 break
@@ -556,15 +584,24 @@ class MasterPick(CustomAction):
             if pos is not None and self._click_verify(ctrl, pos, ban, param):
                 used.add(pos)
                 done += 1
-                print(f"[MasterPick] {tag} {done}/{need} [OK] 命中栏位 {ref} -> 格 {pos}", flush=True)
-                continue
-            fb = self._fallback(ctrl, ban, param, used)
-            if fb is not None:
+                print(f"[MasterPick] {tag} {done}/{need} [OK] 命中栏位 "
+                      f"{','.join(str(v) for v in ref)} -> 格 {pos}", flush=True)
+            else:
+                print(f"[MasterPick] {tag}: 栏位 {','.join(str(v) for v in ref)} "
+                      f"未在本页找到/没点成功，继续下一个输入", flush=True)
+
+        # 2) 输入都没凑齐 → 兜底：从第 1 格开始依次点，直到凑够 need
+        if done < need:
+            print(f"[MasterPick] {tag} 输入栏位只凑到 {done}/{need}，"
+                  f"改走兜底：从第 1 格依次点（跳过已占格）", flush=True)
+            while done < need:
+                fb = self._fallback(ctrl, ban, param, used)
+                if fb is None:
+                    print(f"[MasterPick] {tag} [!] 兜底也点不出来，停在 {done}/{need}", flush=True)
+                    break
                 used.add(fb)
                 done += 1
                 print(f"[MasterPick] {tag} {done}/{need} [OK] 兜底 -> 格 {fb}", flush=True)
-            else:
-                print(f"[MasterPick] {tag} [!] 兜底未成功（可能阶段已结束）", flush=True)
 
         self._click_confirm(ctrl, param, tag)
         print(f"[MasterPick] {tag}阶段结束：完成 {done}/{need}", flush=True)
@@ -572,57 +609,80 @@ class MasterPick(CustomAction):
 
     # ---------------- 扫描 ----------------
     def _scan_role(self, ctrl, ref, param, used, ban):
+        """用该栏位的 1v1 角色模板在 15 个格子里找最像的一格。
+
+        1v1 的 roles/*.png 是 78×78 的整格头像，大师页格子是 99×99（含边框/星级），
+        头像是在格子里「贴着某个偏移」放置的 —— 所以直接拿 78×78 模板在 99×99 格内
+        滑动做 TM_CCOEFF_NORMED，让算法自己找对齐位置。不要再把格子裁剪后 resize 到
+        78（尺寸/比例一失真，同一角色也只有 0.5~0.6，会误判成「角色池不同」）。
+        实测：命中 0.985 / 0.980 / 0.989，未命中 ≤ 0.78，同角色不同 k ≤ 0.77。
+        """
         col, row, k = ref
+        if not (1 <= col <= 10 and 1 <= row <= 3 and 1 <= k <= 3):
+            print(f"[MasterPick] 栏位仅支持 栏1~10 / 行1~3 / 列1~3，收到 {ref}", flush=True)
+            return None
+        tpl = self._load_rel(f"roles/c{col}r{row}k{k}")
+        if tpl is None:
+            print(f"[MasterPick] 缺少模板 roles/c{col}r{row}k{k}.png", flush=True)
+            return None
         bgr = self._grab_bgr(ctrl)
         if bgr is None:
             print(f"[MasterPick] {ref}: 截图为空", flush=True)
             return None
-        th = float(param.get("role_threshold", 0.62))
-        best = (0.0, None)
-        for kk in self._k_order(int(k)):
-            tpl = self._load_rel(f"roles/c{col}r{row}k{kk}")
-            if tpl is None:
+        th = float(param.get("role_threshold", 0.86))
+        th_low = float(param.get("role_threshold_low", 0.72))
+        gap_min = float(param.get("role_gap", 0.12))
+        tpls = self._scale_tpls(tpl, param)
+        scores = {}
+        for ci, ri in self._cells():
+            if (ci, ri) in used:
                 continue
-            tpl78 = cv2.resize(tpl, (self.ROLE_SIZE, self.ROLE_SIZE))
-            for ri, ry in enumerate(self.ROWS, 1):
-                for ci, rx in enumerate(self.COLS, 1):
-                    if (ci, ri) in used:
-                        continue
-                    cell = bgr[ry:ry + self.CELL, rx:rx + self.CELL]
-                    if cell.size == 0 or float(cell.mean()) < 25:
-                        continue
-                    if self._cell_taken(cell, ban, param):
-                        continue
-                    gray = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
-                    sc = self._best_crop_score(gray, tpl78)
-                    if sc > best[0]:
-                        best = (sc, (ci, ri))
-        print(f"[MasterPick] 扫描 c{col}r{row}k{k}: 最佳 {best[0]:.3f} @ {best[1]}（阈值 {th}）", flush=True)
-        return best[1] if best[0] >= th else None
+            ry, rx = self.ROWS[ri - 1], self.COLS[ci - 1]
+            cell = bgr[ry:ry + self.CELL, rx:rx + self.CELL]
+            if cell.size == 0 or float(cell.mean()) < 25:
+                continue
+            if self._cell_taken(cell, ban, param):
+                continue
+            gray = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
+            scores[(ci, ri)] = self._best_score(gray, tpls)
+        if not scores:
+            print(f"[MasterPick] 扫描 c{col}r{row}k{k}: 没有可点格子（全被禁用/已选）", flush=True)
+            return None
+        order = sorted(scores.items(), key=lambda kv: -kv[1])
+        (best_cell, best), second = order[0], (order[1][1] if len(order) > 1 else 0.0)
+        # 双判据：高分直接认；分数被角标/勾/徽章压低的（实测 2P 角标 0.776），
+        # 只要它明显压过其余格子（gap ≥ 0.12）也认 —— 同一个角色一页只出现一次。
+        ok = best >= th or (best >= th_low and (best - second) >= gap_min)
+        print(f"[MasterPick] 扫描 c{col}r{row}k{k}: 最佳 {best:.3f} @ {best_cell}"
+              f"（次佳格 {second:.3f}，差 {best - second:.3f}）→ "
+              f"{'命中' if ok else '未命中'}", flush=True)
+        return best_cell if ok else None
 
     @classmethod
-    def _best_crop_score(cls, gray_cell, tpl78) -> float:
+    def _scale_tpls(cls, tpl, param):
+        """把 78×78 模板按 ±6% 缩放几档，容忍模拟器偶发的轻微缩放差异。"""
+        base = cv2.resize(tpl, (cls.ROLE_SIZE, cls.ROLE_SIZE), interpolation=cv2.INTER_AREA)
+        out = [base]
+        for s in param.get("role_scales", (0.94, 1.06)):
+            n = int(round(cls.ROLE_SIZE * float(s)))
+            n = max(48, min(cls.CELL - 4, n))
+            if n != cls.ROLE_SIZE:
+                out.append(cv2.resize(base, (n, n), interpolation=cv2.INTER_AREA))
+        return out
+
+    @staticmethod
+    def _best_score(gray_cell, tpls) -> float:
         best = 0.0
         h, w = gray_cell.shape[:2]
-        for _, (y0, y1, x0, x1) in cls._CROPS:
-            y0, y1 = max(0, y0), min(h, y1)
-            x0, x1 = max(0, x0), min(w, x1)
-            if y1 - y0 < 8 or x1 - x0 < 8:
+        for t in tpls:
+            if t.shape[0] > h or t.shape[1] > w:
                 continue
-            sub = cv2.resize(gray_cell[y0:y1, x0:x1], (cls.ROLE_SIZE, cls.ROLE_SIZE))
-            r = cv2.matchTemplate(sub, tpl78, cv2.TM_CCOEFF_NORMED)
+            r = cv2.matchTemplate(gray_cell, t, cv2.TM_CCOEFF_NORMED)
             _, mx, _, _ = cv2.minMaxLoc(r)
             if mx > best:
                 best = float(mx)
         return best
 
-    @staticmethod
-    def _k_order(k: int):
-        order = [k if 1 <= k <= 3 else 1]
-        for v in (1, 2, 3):
-            if v not in order:
-                order.append(v)
-        return order
 
     # ---------------- 判定 ----------------
     @staticmethod
@@ -702,19 +762,18 @@ class MasterPick(CustomAction):
         """兜底：从第 1 格开始依次点，直到出现禁用标/白勾。"""
         limit = int(param.get("fallback_max", 15))
         tried = 0
-        for ri in range(1, 4):
-            for ci in range(1, 7):
-                if (ci, ri) in used:
-                    continue
-                cell, taken, _, _ = self._cell_state(ctrl, ci, ri, param)
-                if cell is None or taken:
-                    continue
-                if tried >= limit:
-                    print(f"[MasterPick] 兜底达到上限 {limit} 格", flush=True)
-                    return None
-                tried += 1
-                if self._click_verify(ctrl, (ci, ri), ban, param):
-                    return (ci, ri)
+        for ci, ri in self._cells():
+            if (ci, ri) in used:
+                continue
+            cell, taken, _, _ = self._cell_state(ctrl, ci, ri, param)
+            if cell is None or taken:
+                continue
+            if tried >= limit:
+                print(f"[MasterPick] 兜底达到上限 {limit} 格", flush=True)
+                return None
+            tried += 1
+            if self._click_verify(ctrl, (ci, ri), ban, param):
+                return (ci, ri)
         return None
 
     # ---------------- 阶段收尾 ----------------
@@ -801,8 +860,12 @@ class MasterPick(CustomAction):
         return ArenaPick._load_rel(rel)
 
     @staticmethod
-    def _parse_refs(raw, need: int):
-        """解析 "1,1,1;000;..." 或 [[1,1,1],...] → 长度 need 的列表，000 → None。"""
+    def _parse_refs(raw, need: int | None = None):
+        """解析 "1,1,1;1,1,2;1,1,3" 或 [[1,1,1],...] → 列表，000 → None。
+
+        不再截断到 need：输入位比 need 多出来的都是「备选」，由调用方按顺序尝试，
+        凑齐 need 个就停（v1.2.0 之前截断成 need，等于把备选直接丢掉）。
+        """
         items = []
         if isinstance(raw, str):
             for part in raw.split(";"):
@@ -836,6 +899,8 @@ class MasterPick(CustomAction):
                     items.append(None)
         else:
             items = []
-        while len(items) < need:
-            items.append(None)
-        return items[:need]
+        if need is not None:
+            while len(items) < need:
+                items.append(None)
+            items = items[:need]
+        return items

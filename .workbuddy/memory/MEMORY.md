@@ -28,6 +28,11 @@
 - **已落地最终方案**：盲点流程完全恢复原样；仅在原 win/lose 节流检查里**追加竞技场主页面兜底检测**： ① 新增 `arena.json` 节点 `Arena_MainPage`（TemplateMatch `arena/arena_title.png`「竞技区」横幅，阈值 0.8，DoNothing，next=[Arena_WaitBattle, Arena_Mode_1v1, Arena_Enter_1v1] 与 Arena_LeaveSettle 相同）；② `combat_actions.py` 增加 `arena_main_nodes` 参数（默认 ["Arena_MainPage"]），在 result_nodes 检查后追加 `_hit_any(main_nodes)` 命中即 break；③ `Fight_Once.next` 增加 `Arena_MainPage`（主页面时正向命中 → 直接进下一轮导航）。**注意勿用 `Arena_LeaveSettle` 做 Fight_Once.next 兜底**——它是反向识别，战斗卡死超时时也会命中导致中途乱导航；`Arena_MainPage` 是正向识别无此问题。
 - 效果：无论战斗正常结算还是被误点退回主页面，CombatFighter 都能在 ≤4s 内识别主页面并收手进下一轮；若仍有迭代内误点再另行解决（用户原话："接下来如果还误点的话再看看怎么解决"）。
 
+## 大师竞技场（2026-10-23，v1.2.1）
+- 选人页 15 格 = 6列×2行 + 第3行左 3 格（`MasterPick._cells()`），1280 基准 COLS=[90,202,313,478,590,701] ROWS=[19,128,237] CELL=99。禁用标 ban_stamp（红掩码）/ 选用白勾 master_check；一局会出现 4 个禁用标（自己 2 + 对手 2）。
+- **角色匹配可行**：1v1 `roles/c{栏}r{行}k{列}.png`（78×78）**直接在 99×99 格内滑动** TM_CCOEFF_NORMED 即 0.96~0.99。禁止把格子裁剪后 resize 到 78（v1.2.0 因此误判"角色池不重叠"）。角标/勾/徽章会压到 0.58~0.78，用双判据：≥0.86 或（≥0.72 且比次佳格高 ≥0.12）。
+- 选人策略（用户要求）：禁用**只要 2 个**、选用**只要 3 个**；输入按顺序优先，凑够即停；多填的输入位是备选；全试完仍凑不齐才从第 1 格兜底补齐。
+
 ## 协作偏好
 - base pipeline 参数保持 MAAFramework 规范默认值（如 quick_pick:true），个性化由 interface.json 选项 override 覆盖，不要改 base 默认。
 - MaaDebugger v1.17 是裸流水线调试器：不渲染 select/input 选项，用 Pipeline Override JSON 注参。**它完全不会读 interface.json、也不会拉起 agent**（源码 grep 无 interface/child_exec）——Agent Identifier 的 CONNECT 只是创建带该 identifier 的监听端并等 5s（`set_timeout(5000)`），必须先在终端手动跑 `assets> libs\python\python.exe agent\main.py <identifier>`（identifier 用输入框里那个，持久保存在 STORAGE），agent 存活期间点 CONNECT 才能连上。
