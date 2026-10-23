@@ -70,14 +70,14 @@ class ArenaPick(CustomAction):
         "picks": "栏,行,列;栏,行,列;栏,行,列" 或 [[栏,行,列]×3],  // 仅 quick_pick=false；栏1~10/行列1~3；UI 文本框为字符串
         "roi": [0, 0, 1280, 370],
         "threshold": 0.72,
-        "max_drags": 2,                  // 预留（当前逐页前进逻辑不再逐角色回拖）
-        "last_drags": 10,                // 自动判定为最后一页时，从右往左拖此次数（确保停在最右端拖不动）
-        // 页面由 picks 栏位自动判定，支持混页：栏≤3 归第一页(不拖)、栏≥8 归最后一页(拖到尽头)、栏4~7 按比例拖；
-        // 按「第一页→中间→最后一页」顺序逐页前进选人，全程只向右拖、不回拖。
-        "swipe": {"from": [829, 230], "to": [433, 230], "ms": 600, "settle_ms": 500},
-        // 翻页提速：1200/800 时代 10 次拖页约 20s，会与选人倒计时竞速——
-        // 倒计时归零游戏自动锁定阵容并跳到「确定出手顺序」页，剩余拖页
-        // 全落在顺序页上，随后找不到角色 → 整个任务失败（2026-10-23 现场）。
+        "max_drags": 2,                  // 预留（当前逻辑不再逐角色回拖）
+        "last_drags": 8,                 // 拖到末页的安全上限（实际以"拖到拖不动"为准，自动收敛到最少次数）
+        // 仅支持首页(栏1~3)与末页(栏8~10)：栏4~7 不允许（UI 已 restrict）。
+        // 选人顺序：先选首页 3 人（不拖）→ 一次性拖到末页（拖到拖不动为止）→ 选末页 3 人。
+        // 全程只向右拖、不回拖；拖拽用"页面是否还动"判定到位，避免固定次数导致未到底。
+        "swipe": {"from": [829, 230], "to": [300, 230], "ms": 350, "settle_ms": 250},
+        // 翻页再提速：单次拖拽更长(529px)、更快(350ms)、间隔更短(250ms)；
+        // 拖到末页用 stuck 检测收敛到最少次数，与选人倒计时拉开更大余量。
         "confirm": [622, 638],
         // —— 勾判定参数 ——
         "check_half": 60,        // 勾搜索半径：以被点格子中心为圆心取 (2*half)^2 窗口（格子约 105px）
@@ -189,55 +189,103 @@ class ArenaPick(CustomAction):
             return False
         roi = param.get("roi", [0, 0, 1280, 370])
         threshold = float(param.get("threshold", 0.72))
-        swipe = param.get("swipe", {"from": [829, 230], "to": [433, 230],
-                                    "ms": 600, "settle_ms": 500})
-        last_drags = int(param.get("last_drags", 10))
+        swipe = param.get("swipe", {"from": [829, 230], "to": [300, 230],
+                                    "ms": 350, "settle_ms": 250})
+        last_drags = int(param.get("last_drags", 8))
 
-        # —— 页面自动判定（不再依赖独立「选人页面」选项），并支持混页 ——
-        # 栏≤3 归第一页(不拖)、栏≥8 归最后一页(拖到尽头)、栏4~7 按比例 (col-3) 次拖；
-        # 按「第一页 → 中间 → 最后一页」顺序逐页前进选人，全程只向右拖、不回拖。
-        front = [p for p in picks if p[0] <= 3]
-        mid = [p for p in picks if 4 <= p[0] <= 7]
-        back = [p for p in picks if p[0] >= 8]
-        ordered = (sorted(front, key=lambda p: p[0])
-                   + sorted(mid, key=lambda p: p[0])
-                   + sorted(back, key=lambda p: p[0]))
+        # —— 仅支持首页(栏1~3)与末页(栏8~10)；栏4~7 不允许 ——
+        bad = [p for p in picks if 4 <= p[0] <= 7]
+        if bad:
+            print(f"[ArenaPick] 仅支持首页(栏1~3)与末页(栏8~10)，"
+                  f"栏4~7 不允许：{bad}（请在 UI 改成首页或末页栏位）")
+            return False
+        front = sorted([p for p in picks if p[0] <= 3], key=lambda p: p[0])
+        back = sorted([p for p in picks if p[0] >= 8], key=lambda p: p[0])
+        if not front or not back:
+            print(f"[ArenaPick] 选人栏位必须同时含首页(1~3)与末页(8~10)各 ≥1 个：{picks}")
+            return False
 
-        def _target_drags(col: int) -> int:
-            if col <= 3:
-                return 0
-            if col >= 8:
-                return last_drags
-            return max(0, col - 3)
+        print(f"[ArenaPick] 选人栏位 = {picks} → 首页{[p[0] for p in front]} / 末页{[p[0] for p in back]}")
 
-        print(f"[ArenaPick] 选人栏位 = {picks} → "
-              f"第一页{[p[0] for p in front]} / 中间{[p[0] for p in mid]} / 最后一页{[p[0] for p in back]}")
-        current_drags = 0
-        for i, pick in enumerate(ordered, 1):
-            col, row, k = pick
-            if not (1 <= col <= 10 and 1 <= row <= 3 and 1 <= k <= 3):
-                print(f"[ArenaPick] 栏仅 1~10、行/列 1~3，收到 {pick}")
+        # 1) 先选首页全部角色（不拖）
+        for i, pick in enumerate(front, 1):
+            if not self._pick_one(ctrl, pick, i, roi, threshold, param):
                 return False
-            # 逐页前进：需要更多拖拽时才向右拖，绝不回拖
-            tgt = _target_drags(col)
-            while current_drags < tgt:
-                self._do_swipe(ctrl, swipe)
-                current_drags += 1
-            name = f"c{col}r{row}k{k}"
-            tpl = self._load_template(name)
-            if tpl is None:
-                print(f"[ArenaPick] 找不到模板 roles/{name}.png")
-                return False
-            hit = self._find_role(ctrl, tpl, roi, threshold, tag=name,
-                                  retries=param.get("find_retries", 3),
-                                  retry_gap=float(param.get("find_retry_gap", 0.8)))
-            if hit and self._click_until_check(
-                    ctrl, hit[0], hit[1], i, param, tag=name):
-                print(f"[ArenaPick] [OK] 已选 {name}")
-            else:
-                print(f"[ArenaPick] {name} 未找到/未选上")
+
+        # 2) 一次性拖到末页（拖到拖不动为止），再选末页全部角色
+        n_drags = self._drag_to_end(ctrl, swipe, max_drags=last_drags)
+        print(f"[ArenaPick] 已拖到末页（实际拖拽 {n_drags} 次）")
+        for i, pick in enumerate(back, len(front) + 1):
+            if not self._pick_one(ctrl, pick, i, roi, threshold, param):
                 return False
         return True
+
+    def _pick_one(self, ctrl, pick, idx, roi, threshold, param) -> bool:
+        """选单个角色：找模板 → 点击 → 等勾出现。失败返回 False。"""
+        col, row, k = pick
+        if not (1 <= col <= 10 and 1 <= row <= 3 and 1 <= k <= 3):
+            print(f"[ArenaPick] 栏仅 1~10、行/列 1~3，收到 {pick}")
+            return False
+        name = f"c{col}r{row}k{k}"
+        tpl = self._load_template(name)
+        if tpl is None:
+            print(f"[ArenaPick] 找不到模板 roles/{name}.png")
+            return False
+        hit = self._find_role(ctrl, tpl, roi, threshold, tag=name,
+                              retries=param.get("find_retries", 3),
+                              retry_gap=float(param.get("find_retry_gap", 0.8)))
+        if hit and self._click_until_check(
+                ctrl, hit[0], hit[1], idx, param, tag=name):
+            print(f"[ArenaPick] [OK] 已选 {name}")
+            return True
+        print(f"[ArenaPick] {name} 未找到/未选上")
+        return False
+
+    def _drag_to_end(self, ctrl, swipe, max_drags: int = 8) -> int:
+        """向右拖到末页：每次拖后比对选人区域是否还变化，连两次不变即到位。
+
+        用"页面是否还动"判定，避免固定次数没拖到底；同时受 max_drags 兜底，
+        实际拖拽次数收敛到最小需要值（单次拖拽已加长，远少于旧 10 次）。
+        """
+        prev = self._page_signature(ctrl)
+        stuck = 0
+        n = 0
+        while n < max_drags:
+            self._do_swipe(ctrl, swipe)
+            n += 1
+            now = self._page_signature(ctrl)
+            if prev is not None and now is not None and self._sig_similar(prev, now):
+                stuck += 1
+                if stuck >= 2:
+                    print(f"[ArenaPick] 选人区域连续 {stuck} 次无变化，已到末页（第 {n} 次拖拽）")
+                    return n
+            else:
+                stuck = 0
+            prev = now
+        print(f"[ArenaPick] 达到拖拽上限 {max_drags}，按末页处理")
+        return n
+
+    @classmethod
+    def _page_signature(cls, ctrl):
+        """选人区域下采样灰度签名，用于判断翻页后画面是否还变化。"""
+        gray = cls._grab_1280(ctrl)
+        if gray is None:
+            return None
+        y0, y1 = 60, 370          # 选人网格主区域（避开顶部标题/底部按钮）
+        x0, x1 = 0, 1280
+        H, W = gray.shape[:2]
+        y0, y1 = max(0, y0), min(H, y1)
+        x0, x1 = max(0, x0), min(W, x1)
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            return None
+        return cv2.resize(gray[y0:y1, x0:x1], (64, 24), interpolation=cv2.INTER_AREA)
+
+    @staticmethod
+    def _sig_similar(a, b, thresh: float = 6.0) -> bool:
+        """两张下采样灰度签名的平均绝对差（0~255）是否小于阈值（判定页面已不动）。"""
+        if a.shape != b.shape:
+            return False
+        return float(cv2.absdiff(a, b).mean()) < thresh
 
     @staticmethod
     def _parse_picks(raw) -> list | None:

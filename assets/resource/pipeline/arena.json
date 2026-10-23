@@ -148,18 +148,18 @@
             ],
             "threshold": 0.72,
             "max_drags": 2,
-            "last_drags": 10,
+            "last_drags": 8,
             "swipe": {
                 "from": [
                     829,
                     230
                 ],
                 "to": [
-                    433,
+                    300,
                     230
                 ],
-                "ms": 600,
-                "settle_ms": 500
+                "ms": 350,
+                "settle_ms": 250
             },
             "confirm": [
                 622,

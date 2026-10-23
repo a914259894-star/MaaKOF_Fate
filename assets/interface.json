@@ -119,18 +119,44 @@
                     "custom_action_param": {
                         "duration": 900,
                         "interval": 0,
-                        "skills": ["Fight_Substitute"],
-                        "skill_cycle": ["skill1", "skill2", "skill3", "ult", "secret"],
-                        "skill_tap": { "hold_ms": 30, "interval_ms": 30 },
-                        "normal_tap": { "hold_ms": 30, "interval_ms": 30, "times": 3 },
+                        "skills": [
+                            "Fight_Substitute"
+                        ],
+                        "skill_cycle": [
+                            "skill1",
+                            "skill2",
+                            "skill3",
+                            "ult",
+                            "secret"
+                        ],
+                        "skill_tap": {
+                            "hold_ms": 30,
+                            "interval_ms": 30
+                        },
+                        "normal_tap": {
+                            "hold_ms": 30,
+                            "interval_ms": 30,
+                            "times": 3
+                        },
                         "keep_moving": false,
-                        "move_dir": [-1, 0],
-                        "result_nodes": ["Fight_Lose"],
+                        "move_dir": [
+                            -1,
+                            0
+                        ],
+                        "result_nodes": [
+                            "Fight_Lose"
+                        ],
                         "result_interval": 4.0,
                         "wrong_threshold": 0.85,
                         "main_threshold": 0.8,
-                        "back_xy": [1244, 28],
-                        "user_close_xy": [843, 109],
+                        "back_xy": [
+                            1244,
+                            28
+                        ],
+                        "user_close_xy": [
+                            843,
+                            109
+                        ],
                         "wrong_settle_ms": "{wrong_settle_ms}",
                         "wrong_max_layers": 12
                     }
@@ -140,15 +166,15 @@
         "选人栏位": {
             "type": "input",
             "label": "选人栏位（栏,行,列）",
-            "description": "常规选人时自定义 3 个角色。每行一个，逗号分隔 栏,行,列（栏1~10、行1~3、列1~3）。例：1,1,1;2,1,1;3,1,1。页面由栏位自动判定：栏全≤3 走第一页，含栏≥8 自动拖到最后一页。仅在「快速选人=关闭」时出现。",
+            "description": "常规选人时自定义 3 个角色。每行一个，逗号分隔 栏,行,列。仅支持首页(栏1~3)与末页(栏8/9/10)；栏4~7 不允许。例：1,1,1;2,1,1;3,1,1 或 8,2,2;9,3,3;10,1,1。页面由栏位自动判定：含栏≥8 自动拖到末页，其余走首页。仅在「快速选人=关闭」时出现。",
             "inputs": [
                 {
                     "name": "picks",
                     "label": "栏位",
                     "default": "1,1,1;2,1,1;3,1,1",
                     "pipeline_type": "string",
-                    "verify": "^(\\d{1,2},\\d,\\d)(;\\d{1,2},\\d,\\d){2}$",
-                    "pattern_msg": "格式应为 栏,行,列;栏,行,列;栏,行,列（如 1,1,1;2,1,1;3,1,1），栏1~10、行1~3、列1~3"
+                    "verify": "^(10|[1-3]|[89]),[1-3],[1-3](;(10|[1-3]|[89]),[1-3],[1-3]){2}$",
+                    "pattern_msg": "格式应为 栏,行,列;栏,行,列;栏,行,列（如 1,1,1;2,1,1;3,1,1 或 8,2,2;9,3,3;10,1,1）；栏仅限 1~3（首页）或 8/9/10（末页），栏4~7 不允许，行/列 1~3"
                 }
             ],
             "pipeline_override": {
