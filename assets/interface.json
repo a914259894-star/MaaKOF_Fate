@@ -3,7 +3,7 @@
     "name": "MaaKOF_Fate",
     "title": "MaaKOF_Fate 竞技场自动化",
     "description": "基于 MaaFramework 的格斗手游竞技场自动化：快速选人 → 战斗（技能循环 + 普攻 + 替身识别）→ 结算确认 → 按所选模式自动循环；支持 1v1 排位与大师竞技场（禁用+选用两阶段选人）。坐标以 1280x720 为基准，适配 16:9 安卓模拟器（MuMu 2560x1440 实测）。",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "welcome": "# 使用前必读\n\n- 请从游戏**主界面**开始运行（竞技场任务）\n- 模拟器分辨率建议 2560x1440（16:9 均可），输入方式由 MaaFramework 自动选择\n- 「战斗·单场」仅在**已进入战斗画面**时使用，它会立刻开始盲点技能按钮\n- 「竞技场·大师」需要已解锁大师竞技场；选人分两阶段（先禁 3 个、再选 3 个），栏位写法与 1v1 相同（栏,行,列），填 000 表示该位放空\n- **已内置便携 Python（含 maafw==5.5.0 + opencv），开箱即用，无需自行安装 Python。**\n- 如需改用本机 Python：把 interface.json 的 `agent.child_exec` 改回 `\"python\"`，并自行 `pip install -r assets/agent/requirements.txt`。",
     "controller": [
         {

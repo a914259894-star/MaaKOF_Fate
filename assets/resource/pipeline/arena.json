@@ -42,7 +42,7 @@
         "threshold": 0.7,
         "action": "Click",
         "pre_delay": 300,
-        "post_delay": 1000,
+        "post_delay": 1800,
         "rate_limit": 1000,
         "timeout": 30000,
         "next": [
@@ -74,6 +74,12 @@
         "green_mask": false,
         "threshold": 0.7,
         "action": "Click",
+        "target": [
+            621,
+            196,
+            4,
+            4
+        ],
         "pre_delay": 500,
         "post_delay": 1000,
         "rate_limit": 1000,

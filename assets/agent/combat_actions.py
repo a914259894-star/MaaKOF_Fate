@@ -109,7 +109,12 @@ class CombatFighter(CustomAction):
         "back_xy": [1244, 28],         // 右上角红色返回按钮（至尊赛/排行榜/商城共用）
         "user_close_xy": [843, 109],   // 玩家详情弹窗 X 关闭
         "wrong_settle_ms": 1200,       // 每次退出点击后的等待
-        "wrong_max_layers": 12         // 嵌套误点最多连退层数
+        "wrong_max_layers": 12,        // 嵌套误点最多连退层数
+        // —— 未知界面兜底（2026-10-23 v1.2.2，装备页等未收录界面） ——
+        "stall_checks": 5,             // 连续几次检查画面纹丝不动才算卡死（5×4s=20s）
+        "stall_diff": 1.5,             // 32x18 签名平均绝对差阈值（装备页实测 0~0.5）
+        "stall_max": 4,                // 最多点几次返回，用满后不再兜底
+        "settle_threshold": 0.8        // 结算元素阈值（命中则不点返回）
     }
 
     退出设计（2026-10-22 定稿）：盲点速度快，可能误点进竞技场的子界面且多层嵌套。
@@ -121,7 +126,9 @@ class CombatFighter(CustomAction):
       ④ 无误点且非主页面 → 检查失败结算文字（只查 lose），命中 break 交还 Fight_Lose
         → Arena_SettleOk 点确认（失败结算画面盲点点不掉，v1.1.3 实测卡死 900s 的教训；
         胜利结算盲点自己会点掉回主界面，不查 win）；
-      ⑤ 都未命中 → 还在战斗，继续盲点。
+      ⑤ 画面连续 stall_checks 次几乎不动、又不是上面任何一种（如装备页）→ 未知界面
+        兜底：点右上红色返回箭头自救（v1.2.2，最多 stall_max 次）；
+      ⑥ 都未命中 → 还在战斗，继续盲点。
     """
 
     # 误点界面定义（顺序即检测顺序：玩家详情必须最先——弹窗开着时背景标题仍可见）
@@ -177,6 +184,9 @@ class CombatFighter(CustomAction):
         t0 = time.time()
         last_report = 0.0
         joy_down = False
+        # 未知界面兜底状态（2026-10-23 v1.2.2）：装备页等未收录界面识别不到时，
+        # 靠「画面长时间纹丝不动」判定卡死，点右上返回自救。
+        stall = {"sig": None, "cnt": 0, "fired": 0}
 
         if keep_moving:
             self._hold_joystick(ctrl, move_dir)
@@ -211,6 +221,10 @@ class CombatFighter(CustomAction):
                         break
                     if self._hit_any(context, img, result_nodes):
                         print("[CombatFighter] 检测到胜负结算，停止出招", flush=True)
+                        break
+                    # ④ 未知界面兜底：既不是已知误点界面/主界面/结算，画面又长期不动
+                    #    （如装备页）→ 点右上返回自救，避免盲点空转 900s。
+                    if self._unknown_escape(ctrl, img, gray, param, stall):
                         break
 
                 # 替身：受击发光才点，其余技能不识别
@@ -370,6 +384,125 @@ class CombatFighter(CustomAction):
             gray = cls._to_gray_1280(img)
         print(f"[CombatFighter] 连退 {max_layers} 层仍未回主界面，放弃（防死循环），继续观察", flush=True)
         return False
+
+    # ================== 未知界面兜底（2026-10-23 v1.2.2） ==================
+    #
+    # 来历：v1.2.1 现场（log-20261023 15:13:47~15:15:58）战斗结束后残留盲点把画面
+    # 点到「装备页」，而 _WRONG_DEFS 只收录 玩家详情/排行榜/至尊赛/商城 四种，
+    # _main_page_hit 也不命中 → _escape_misnav 返回 False → 恢复盲点 → 空转 2 分钟。
+    # 现在补一层通用兜底：连续 stall_checks 次检查画面签名几乎不变（装备页是静态页，
+    # 实测均值 121.8~122.7 波动 ±0.5；战斗画面每 10s 均值动辄差 10+），且没有结算
+    # 文字 → 认为卡在未收录界面，点右上红色返回箭头自救。
+    @classmethod
+    def _unknown_escape(cls, ctrl, img, gray, param, stall) -> bool:
+        """未知界面兜底。返回 True 仅在需要结束战斗循环时（目前不主动结束）。"""
+        diff_th = float(param.get("stall_diff", 1.5))
+        need = max(2, int(param.get("stall_checks", 5)))
+        limit = max(1, int(param.get("stall_max", 4)))
+        settle = float(param.get("wrong_settle_ms", 1200)) / 1000
+        settle_th = float(param.get("settle_threshold", 0.8))
+        back_xy = param.get("back_xy", [1244, 28])
+
+        sig = cv2.resize(gray, (32, 18), interpolation=cv2.INTER_AREA)
+        prev = stall.get("sig")
+        if prev is None:
+            stall["cnt"] = 0
+        elif float(cv2.absdiff(sig, prev).mean()) < diff_th:
+            stall["cnt"] = int(stall.get("cnt", 0)) + 1
+        else:
+            stall["cnt"] = 0
+        stall["sig"] = sig
+
+        if int(stall.get("cnt", 0)) < need:
+            return False
+        if int(stall.get("fired", 0)) >= limit:
+            if not stall.get("exhausted"):
+                print(f"[CombatFighter] 未知界面兜底已用满 {limit} 次，停止兜底（回到正常循环）",
+                      flush=True)
+                stall["exhausted"] = True
+            stall["cnt"] = 0
+            return False
+        # 触发前再做一次 0.8s 后的确认：检查间隔是 4s，若战斗待机动画周期恰好是
+        # 4s 的整数分之一，固定间隔采样会出现「相位对齐」的假静止。0.8s 与 4s 非整除，
+        # 真实运动的画面这一步必然露馅；装备页这种死页面依旧纹丝不动。
+        time.sleep(0.8)
+        if not _shot(ctrl):
+            return False
+        img2 = ctrl.cached_image
+        if img2 is None or not getattr(img2, "size", 0):
+            return False
+        gray2 = cls._to_gray_1280(img2)
+        sig2 = cv2.resize(gray2, (32, 18), interpolation=cv2.INTER_AREA)
+        if float(cv2.absdiff(sig2, sig).mean()) >= diff_th:
+            stall["cnt"] = 0
+            stall["sig"] = sig2
+            return False
+        # 结算画面（胜/负文字、确定键）不点返回，交给上层流水线处理
+        if cls._settle_visible(gray2, settle_th):
+            stall["cnt"] = 0
+            stall["sig"] = sig2
+            return False
+
+        stall["cnt"] = 0
+        stall["sig"] = sig2
+        stall["fired"] = int(stall.get("fired", 0)) + 1
+        pos = cls._find_red_back(img2) or (int(back_xy[0]), int(back_xy[1]))
+        print(f"[CombatFighter] 画面静止 {need} 次仍未识别到已知界面（疑似装备页等），"
+              f"点返回 {pos} 兜底（第 {stall['fired']}/{limit} 次）", flush=True)
+        ctrl.post_click(int(pos[0]), int(pos[1]))
+        time.sleep(settle)
+        return False
+
+    @classmethod
+    def _settle_visible(cls, gray, threshold: float) -> bool:
+        """画面里是否已有胜负结算元素（win/lose 文字或确定键）。"""
+        roi = (0, 0, gray.shape[1], gray.shape[0])
+        for rel in ("win_text", "lose_text", "settle_confirm"):
+            tpl = cls._load_tpl(rel)
+            if tpl is None:
+                continue
+            if cls._match_score(gray, tpl, roi) >= threshold:
+                return True
+        return False
+
+    @staticmethod
+    def _find_red_back(img):
+        """在右上角 (x>=900, y<95) 找红色返回箭头，返回 1280 基准中心坐标或 None。
+
+        各子界面（竞技场页/装备页/至尊赛/商城）的返回键都是同一个红色箭头，
+        但横坐标不完全一致（装备页 ≈(1110,33)、至尊赛/商城 ≈(1244,28)），
+        所以用红色掩码取「最靠右的红色块」而不是写死坐标。
+        """
+        try:
+            bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) if img.ndim == 2 else img
+            h, w = bgr.shape[:2]
+            if w != 1280:
+                bgr = cv2.resize(bgr, (1280, max(1, int(round(h * 1280.0 / w)))),
+                                 interpolation=cv2.INTER_AREA)
+            roi = bgr[0:95, 900:1280]
+            if roi.size == 0:
+                return None
+            b = roi[:, :, 0].astype("int16")
+            g = roi[:, :, 1].astype("int16")
+            r = roi[:, :, 2].astype("int16")
+            red = (r - cv2.max(g, b)).clip(0, 255).astype("uint8")
+            mask = ((red > 55).astype("uint8")) * 255
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE,
+                                    cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
+            cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            best = None
+            for c in cnts:
+                x, y, cw, ch = cv2.boundingRect(c)
+                if cw * ch < 250 or cw < 14 or ch < 10 or cw > 130 or ch > 95:
+                    continue
+                cx = x + cw / 2.0 + 900.0
+                if best is None or cx > best[0]:
+                    best = (cx, y + ch / 2.0)
+            if best is None:
+                return None
+            return int(round(best[0])), int(round(best[1]))
+        except Exception:
+            return None
 
     @staticmethod
     def _hit_any(context: Context, img, nodes: list[str]) -> bool:
