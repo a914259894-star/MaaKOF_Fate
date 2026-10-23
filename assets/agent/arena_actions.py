@@ -1044,6 +1044,12 @@ class MasterPick(CustomAction):
 # ============================================================================
 # 大师团「上阵角色」修复（2026-10-23 v1.2.6）
 # ============================================================================
+# 点过却点不出勾的卡位（key=(x,y)）→ 记下时间戳。有效期内的卡位不再重复点，
+# 避免「匹配战斗失败 → 回到本页 → 再补人 → 又点同一个死卡位」的无效循环。
+STUCK_TTL = 180.0
+_TEAM_STUCK = {}
+
+
 class MasterTeamFix(CustomAction):
     """把被盲点误点下阵的角色重新点上，避免「角色不够、匹配不了」。
 
@@ -1060,7 +1066,8 @@ class MasterTeamFix(CustomAction):
         1. 从最左开始找第一个「没有这个勾」的卡位 → 点它 → 勾出现即补上；
         2. 可见卡位全都有勾时，从右往左拖一下角色行（看后面还有没有没上阵的），
            拖到底（画面纹丝不动）就收手；
-        3. 点了却没出勾（比如已经满员）→ 立即收手，不再瞎点。
+        3. 点了却没出勾（比如已经满员）→ 记下该卡位，180s 内不再点它，
+           转去试别的未上阵卡位；都试完就收手，不瞎点。
 
     判定实测（1146x645 现场截图 → 1280 基准换算）：
       已上阵卡位 0.93~1.00，未上阵卡位 0.22 → 阈值 0.70 分离干净。
@@ -1133,8 +1140,12 @@ class MasterTeamFix(CustomAction):
         while added < max_add:
             if context.tasker.stopping:
                 break
-            idx = next((i for i, d in enumerate(done) if not d), None)
+            blanks = [i for i, d in enumerate(done) if not d]
+            idx = next((i for i in blanks if not self._is_stuck(slots[i])), None)
             if idx is None:
+                if blanks:
+                    print("[TeamFix] 剩下的未上阵卡位都点过且点不出勾，本轮不再重试", flush=True)
+                    break
                 # 可见卡位全上阵 → 往右看还有没有没上阵的
                 if drags >= max_drags:
                     print("[TeamFix] 可见卡位都已上阵，且已拖到头，结束修复", flush=True)
@@ -1168,14 +1179,26 @@ class MasterTeamFix(CustomAction):
                 print(f"[TeamFix] [OK] 第 {idx + 1} 个卡位已上阵（本轮累计 {added} 个）", flush=True)
                 continue
 
-            print(f"[TeamFix] 第 {idx + 1} 个卡位点了没出勾（可能已满员/不可上阵），收手不再补",
-                  flush=True)
-            break
+            # 记下来，一段时间内不再重复点它（匹配重试会反复回到这页）
+            self._mark_stuck(slots[idx])
+            print(f"[TeamFix] 第 {idx + 1} 个卡位点了没出勾（可能已满员/不可上阵），"
+                  f"{int(STUCK_TTL)}s 内不再点它", flush=True)
+            continue
 
         print(f"[TeamFix] 修复结束：本轮补上 {added} 个", flush=True)
         return True
 
     # ---------------- 内部工具 ----------------
+
+    @staticmethod
+    def _is_stuck(slot) -> bool:
+        """这个卡位最近点过、没出勾，还在有效期内 → 跳过。"""
+        t = _TEAM_STUCK.get(tuple(slot))
+        return t is not None and (time.time() - t) < STUCK_TTL
+
+    @staticmethod
+    def _mark_stuck(slot) -> None:
+        _TEAM_STUCK[tuple(slot)] = time.time()
 
     @staticmethod
     def _grab(ctrl):

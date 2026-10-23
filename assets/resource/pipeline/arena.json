@@ -324,17 +324,18 @@
         "recognition": "DirectHit",
         "action": "Click",
         "target": [
-            1121,
-            575,
-            92,
-            92
+            1135,
+            634,
+            80,
+            35
         ],
         "pre_delay": 300,
         "post_delay": 1200,
         "rate_limit": 2000,
-        "timeout": 20000,
+        "timeout": 30000,
         "next": [
-            "Arena_MasterWaitPick"
+            "Arena_MasterWaitPick",
+            "Arena_MasterPage"
         ]
     },
     "Arena_MasterWaitPick": {

@@ -48,6 +48,21 @@
 - **阶段切换不能靠「点确认」推进，要识别新阶段的界面标志**（2026-10-23，v1.2.5 现场教训）：大师禁用阶段点「确定」只是我方声明完成，游戏要等对手也确认才切进选用阶段，中间 1.7~17.7s 点格子全是空转 —— 白等还把前几个输入耗掉，甚至拖到倒计时归零变 0/3。正解：不点确认、让弹窗倒计时自然结束，然后用新阶段独有的锚点（大师选用阶段 = 底部橙字「温馨提示：请选择格斗家」，模板 `arena/master_pick_tip.png`，ROI [520,645,240,70]，正例 0.986~1.000 / 反例 ≤0.359）确认切过去了再动手。
 - **模板匹配阈值不要为了"兜住遮挡"放到 0.72 这种低分**：实测大师页「别的角色」最高能到 0.787（`c6r2k3`→`c7r1k3`），而 2P 角标遮挡的**正确**角色是 0.784 —— 两者无法区分，只能一律不认（低分档保底 ≥0.82）。宁可漏选走备选/兜底，也不能点错人。
 
+## 大师团「上阵」页（2026-10-23，v1.2.6）
+- 页面 = 左侧 tab「大师竞技场/大师团」、底部一排角色卡、右下「匹配战斗」。识别：`master_title` 在 ROI `[380,20,560,90]` 内 0.997（战斗 HUD 0.166 / 选人页 0.235）。**这页没有能跳走的入口**，盲点跑不了，但盲点坐标正好压在 `normal`(1137,632)=匹配战斗、`skill1`(981,643)=一键上阵 上，会把底部角色行的「上阵」点掉 → 角色不够、匹配不了。
+- 底部角色行卡位（白色圆形勾 = 已上阵）中心 x=**126/262/400/537/674**（间距 137）、y=**640**；模板 `arena/master_team_check.png`（46×46，已上阵 0.93~1.00 / 未上阵 0.22，阈值 0.7）。点击点用 `(cx, 682)`（避开正中半径 22 的勾）。
+- 处理：① `CombatFighter` 每轮循环**最前面**判 `_team_page_hit`（标题 ROI + 任一卡位有勾，双判据）命中立即 break，别再等 4s 节流；② `_unknown_escape` 对该页**不点返回**（不需要自救）；③ `Arena_MasterPage.next → Arena_TeamFix(MasterTeamFix) → Arena_MasterMatch`：补第一个没勾的卡位，全勾则右→左拖 `(740,640)→(140,640)`，签名没变=到底收手，点了不出勾=满员只点一次就收手，`team_size>0` 时够数直接跳过。
+
+## 大师团「匹配战斗」按钮的点击区（2026-10-23 v1.2.8 现场踩坑）
+- **target 不能框整个菱形**：`[1121,575,92,92]` 会让点击随机落到菱形上部的拳头图标区，那里不响应 → 点了没反应 → `Arena_MasterWaitPick` 20s 一个都不命中 → `Arena_MasterMatch` 节点超时 → 队列静默结束（外壳还打「任务已全部完成」，on_error 截图停在大师团页）。现场 4 次点击：y=640/635/635 成功，y=587 失败。**响应区在菱形下半（y≥634）**，安全 target = `[1135,634,80,35]`。
+- **任何「点一下就要等新页面」的节点，next 必须带自恢复兜底**：`Arena_MasterMatch.next` 现在 `[Arena_MasterWaitPick, Arena_MasterPage]`，点了没反应就重走 `MasterPage→TeamFix→MasterMatch` 再点，绝不能只剩一个「等结果」节点。
+- `MasterTeamFix` 的死卡位记忆：点不出勾的卡位进 `_TEAM_STUCK`（180s），期内跳过（现场第 4 格 x=537 就是这种，点多少次都不变勾；其余四格 0.92~0.99）。
+
+## 战斗误点退出（v1.2.7 定稿，勿再改回「恢复盲点」）
+- **复核失败绝不能恢复盲点**：`_escape_misnav` 的 2s 复核失败 = 画面已被残留点击带走 = 人已在竞技场页/主城，这时恢复盲点就是在竞技场页或主城底部导航上乱按（现场 18:16~18:17：商城→排行榜→竞技场页→复核失败→至尊赛→…→主城→点进装备）。现在复核失败一律 `return True` 收手，交给流水线认页面。
+- **主城兜底**：主城 = `arena/main_arena_btn.png`（85×85「KO 竞技」图标）全屏匹配 ≥0.85（主城 1.0 / 大师团页 0.489 / 选人页 0.516 / 战斗 0.496，单次约 20ms）。agent 每轮快速检查 + `_escape_misnav` 都判，命中立即 break；pipeline 里 `Arena_HomePage`（≥0.7）→ `Arena_Enter_1v1`（大师任务被 interface 覆盖成 `Arena_Enter_Master`，否则从主城会误进 1v1）。
+- **兜底返回不再盲点**：`Arena_UnknownBack` 已从 `DirectHit+Click` 改成 Custom `ArenaSafeBack`——已在竞技场页/大师团页/主城就不点（这正是「返回键多按了退到主城」的元凶），只有真子页面才点红色箭头。
+
 ## 协作偏好
 - base pipeline 参数保持 MAAFramework 规范默认值（如 quick_pick:true），个性化由 interface.json 选项 override 覆盖，不要改 base 默认。
 - MaaDebugger v1.17 是裸流水线调试器：不渲染 select/input 选项，用 Pipeline Override JSON 注参。**它完全不会读 interface.json、也不会拉起 agent**（源码 grep 无 interface/child_exec）——Agent Identifier 的 CONNECT 只是创建带该 identifier 的监听端并等 5s（`set_timeout(5000)`），必须先在终端手动跑 `assets> libs\python\python.exe agent\main.py <identifier>`（identifier 用输入框里那个，持久保存在 STORAGE），agent 存活期间点 CONNECT 才能连上。
