@@ -19,6 +19,7 @@
             "Fight_Lose",
             "Arena_MainPage",
             "Arena_MasterPage",
+            "Arena_RankPage",
             "Arena_HomePage",
             "Arena_UnknownBack"
         ]
@@ -61,7 +62,11 @@
         "rate_limit": 1000,
         "timeout": 30000,
         "next": [
-            "Arena_Mode_1v1"
+            "Arena_Mode_1v1",
+            "Arena_RankPage",
+            "Arena_MainPage",
+            "Arena_HomePage",
+            "Arena_UnknownBack"
         ]
     },
     "Arena_Enter_Master": {
@@ -80,7 +85,11 @@
         "timeout": 30000,
         "next": [
             "Arena_Mode_Master",
-            "Arena_MasterPage"
+            "Arena_MasterPage",
+            "Arena_RankPage",
+            "Arena_MainPage",
+            "Arena_HomePage",
+            "Arena_UnknownBack"
         ]
     },
     "Arena_Mode_1v1": {
@@ -100,7 +109,10 @@
         "rate_limit": 1000,
         "timeout": 60000,
         "next": [
-            "Arena_WaitPick"
+            "Arena_WaitPick",
+            "Arena_RankPage",
+            "Arena_MainPage",
+            "Arena_UnknownBack"
         ]
     },
     "Arena_Mode_Master": {
@@ -114,7 +126,10 @@
         "rate_limit": 1000,
         "timeout": 30000,
         "next": [
-            "Arena_MasterPage"
+            "Arena_MasterPage",
+            "Arena_RankPage",
+            "Arena_MainPage",
+            "Arena_UnknownBack"
         ]
     },
     "Arena_WaitPick": {
@@ -215,7 +230,9 @@
             "Arena_WaitBattle",
             "Arena_MainPage",
             "Arena_Mode_1v1",
-            "Arena_Enter_1v1"
+            "Arena_Enter_1v1",
+            "Arena_RankPage",
+            "Arena_StuckRecover"
         ]
     },
     "Arena_WaitBattle": {
@@ -267,7 +284,8 @@
             "Arena_Mode_1v1",
             "Arena_Enter_1v1",
             "Arena_MasterPage",
-            "Arena_Mode_Master"
+            "Arena_Mode_Master",
+            "Arena_RankPage"
         ]
     },
     "Arena_MasterPage": {
@@ -375,7 +393,10 @@
         "rate_limit": 1000,
         "timeout": 180000,
         "next": [
-            "Arena_MasterPick"
+            "Arena_MasterPick",
+            "Arena_RankPage",
+            "Arena_MainPage",
+            "Arena_UnknownBack"
         ]
     },
     "Arena_MasterPick": {
@@ -426,7 +447,84 @@
             "Arena_MasterPage",
             "Arena_Mode_Master",
             "Arena_Enter_Master",
-            "Arena_MainPage"
+            "Arena_MainPage",
+            "Arena_RankPage",
+            "Arena_StuckRecover"
+        ]
+    },
+    "Arena_RankPage": {
+        "recognition": "TemplateMatch",
+        "template": "wrong/wrong_rank.png",
+        "green_mask": false,
+        "threshold": 0.8,
+        "roi": [
+            0,
+            0,
+            340,
+            110
+        ],
+        "action": "Custom",
+        "custom_action": "ArenaRankBack",
+        "custom_action_param": {
+            "back_xy": [
+                1244,
+                28
+            ],
+            "max_tries": 3,
+            "reset_after": 180,
+            "wait": 1.2,
+            "main_threshold": 0.8,
+            "home_threshold": 0.85
+        },
+        "pre_delay": 200,
+        "post_delay": 800,
+        "rate_limit": 2000,
+        "timeout": 30000,
+        "next": [
+            "Arena_HomePage",
+            "Arena_MainPage",
+            "Arena_MasterPage",
+            "Arena_Enter_1v1",
+            "Arena_Enter_Master",
+            "Arena_RankPage",
+            "Arena_UnknownBack"
+        ]
+    },
+    "Arena_StuckRecover": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "ArenaStuckBack",
+        "custom_action_param": {
+            "grace": 15,
+            "poll": 0.5,
+            "back_xy": [
+                1244,
+                28
+            ],
+            "battle_threshold": 0.8,
+            "page_threshold": 0.8,
+            "home_threshold": 0.85,
+            "pick_threshold": 0.85,
+            "wait": 1.2,
+            "pick_roi": [
+                340,
+                320,
+                240,
+                140
+            ]
+        },
+        "pre_delay": 100,
+        "post_delay": 300,
+        "rate_limit": 2000,
+        "timeout": 40000,
+        "next": [
+            "Arena_WaitBattle",
+            "Arena_MainPage",
+            "Arena_MasterPage",
+            "Arena_RankPage",
+            "Arena_HomePage",
+            "Arena_Enter_1v1",
+            "Arena_Enter_Master"
         ]
     }
 }
