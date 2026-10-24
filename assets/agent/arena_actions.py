@@ -522,6 +522,8 @@ class MasterPick(CustomAction):
         "pick_phase_timeout": 30, // 禁用结束后等「选用阶段」真正开始的秒数
         "pick_phase_roi": [520, 645, 240, 70],  // 底部「温馨提示」ROI（x,y,w,h）
         "pick_phase_threshold": 0.75,           // 温馨提示命中阈值（正例 ≥0.986）
+        "pick_page_roi": [340, 320, 240, 140],  // 左上「1P」标签 ROI（判断选人页还在不在）
+        "pick_page_threshold": 0.8,             // 1P 命中阈值（选人页内 0.995~0.996）
         "confirm_wait": 6,        // 点确定前最多等按钮出现的秒数
         "mark_timeout": 2.0,      // 点击后轮询等标记（白勾/禁用标）出现的秒数
         "mark_poll": 0.12         // 轮询间隔（每次轮询含一次截图，实际约 0.3s/次）
@@ -533,6 +535,9 @@ class MasterPick(CustomAction):
       3. 多出来的输入位是备选，不会被强行点掉；
       4. 全程有「选人页是否还在」守卫：倒计时归零游戏接管后立刻收手，不再盲点、
          也不再点 确定（否则会把点击丢到大厅/主页上，把循环带偏）。
+         **「1P 标签不见」不等于离开**（v1.2.11）：禁用→选用阶段切换的过渡里 1P 会
+         短暂消失，等选用阶段时只认「确证看到战斗/竞技场/主城/大师团页」才放行，
+         否则会把整个选用阶段跳过去（2026-10-24 现场：0 个选用直接进战斗）。
       5. 禁用阶段点完 2 个不点「确定」，让 20s 倒计时自然结束 —— 点了确定只是我方向
          游戏声明完成，游戏还要等对手也确认才切进选用阶段；这段等待期（实测
          1.7~17.7s）里点格子全部无效，会把前几个输入白白耗掉。所以改成：等底部出现
@@ -574,19 +579,34 @@ class MasterPick(CustomAction):
 
         # 禁用结束后不要立刻点 —— 见类文档第 5 条：先等「温馨提示」确认进入选用阶段
         if not bool(param.get("ban_confirm", False)):
-            if not self._wait_pick_phase(ctrl, param):
-                if self._left_page or self._left_pick_page(ctrl, param):
-                    print("[MasterPick] [OK] 等选用阶段时页面已离开，放行", flush=True)
-                    return True
-                print("[MasterPick] [!] 迟迟没进选用阶段，退回旧路径：点「确定」再试", flush=True)
-                self._click_confirm(ctrl, param, "禁用")
-                time.sleep(float(param.get("confirm_settle", 1.2)))
+            phase = self._wait_pick_phase(ctrl, param)
+            if phase is False:
+                # 只有确证看到战斗/竞技场/主城才会走到这里（_confirmed_away）
+                print("[MasterPick] [OK] 已确认离开选人页，放行让 pipeline 继续", flush=True)
+                return True
+            if phase is None:
+                # 超时：区分「还在等对手（1P 在）」和「其实已进选用、只是提示没认到」
+                p1_alive = True
+                bgr = self._grab_bgr(ctrl)
+                if bgr is not None:
+                    p1_alive = self._p1_score(
+                        cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), param) >= self._p1_th(param)
+                if p1_alive:
+                    print("[MasterPick] [!] 迟迟没进选用阶段（1P 仍在），退回旧路径：点「确定」再试",
+                          flush=True)
+                    self._click_confirm(ctrl, param, "禁用")
+                    time.sleep(float(param.get("confirm_settle", 1.2)))
+                else:
+                    # 2026-10-24：1P 已不在但没看到别的界面 → 大概率已经在选用阶段，
+                    # 只是温馨提示没认到。直接选，不要再点确定（点了等于提前结束选人）。
+                    print("[MasterPick] [!] 等选用阶段超时且 1P 已不在，判定已在选用阶段，"
+                          "直接开始选（不点确定）", flush=True)
         ok_pick = self._run_phase(ctrl, param, ban=False)
 
         if ok_ban and ok_pick:
             print("[MasterPick] [OK] 禁用与选用均完成", flush=True)
             return True
-        if self._left_page or self._left_pick_page(ctrl, param):
+        if self._left_page or self._left_pick_page(ctrl, param, confirm_gap=0.5):
             print("[MasterPick] [OK] 已离开选人页（顺序确认/战斗），按完成放行", flush=True)
             return True
         print("[MasterPick] [X] 选人未完成，且仍在选人页", flush=True)
@@ -820,8 +840,10 @@ class MasterPick(CustomAction):
                 return True
             print(f"[MasterPick] 格 ({ci},{ri}) 第 {attempt + 1} 次点击未确认"
                   f"（等 {float(param.get('mark_timeout', 2.0))}s 仍无标记）", flush=True)
-            # ③ 页面已经不是选人页了（倒计时归零/游戏接管）：不要再点，直接收手
-            if self._left_pick_page(ctrl, param):
+            # ③ 页面已经不是选人页了（倒计时归零/游戏接管）：不要再点，直接收手。
+            #    confirm_gap 复核：阶段切换过渡里 1P 会短暂消失，单测一次就收手会
+            #    把后面的格子全丢掉（2026-10-24 现场）。
+            if self._left_pick_page(ctrl, param, confirm_gap=0.5):
                 self._left_page = True
                 print("[MasterPick] 选人页已消失（倒计时结束/游戏接管），停止点击", flush=True)
                 return False
@@ -910,16 +932,108 @@ class MasterPick(CustomAction):
             time.sleep(1.0)
         return False
 
-    def _wait_pick_phase(self, ctrl, param) -> bool:
+    # 选人页「1P」标签判定用的 ROI / 阈值（_left_pick_page 与 _wait_pick_phase 共用）
+    @staticmethod
+    def _p1_th(param) -> float:
+        return float(param.get("pick_page_threshold", 0.8))
+
+    def _p1_score(self, gray, param) -> float:
+        """左上 1P 标签的匹配分（选人页存在时 0.995~0.996）。
+
+        模板缺失/ROI 过小时返回 1.0（保守当成「页面还在」），避免因缺资源把
+        整个选人流程误判成「页面已离开」而直接跳过选人。
+        """
+        tpl = self._load_rel("pick_wait")
+        if tpl is None:
+            return 1.0
+        rx, ry, rw, rh = param.get("pick_page_roi", [340, 320, 240, 140])
+        H, W = gray.shape[:2]
+        patch = gray[max(0, ry):min(H, ry + rh), max(0, rx):min(W, rx + rw)]
+        if patch.shape[0] < tpl.shape[0] or patch.shape[1] < tpl.shape[1]:
+            return 1.0
+        return float(cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED).max())
+
+    def _left_pick_page(self, ctrl, param, confirm_gap: float = 0.0) -> bool:
+        """当前是否已经不是选人页（判据：左上「1P」标签是否还在）。
+
+        选人页固定会在 (405,363) 90×50 处显示 1P 标签（三帧实测 0.995~0.996），
+        倒计时归零游戏接管后会跳到顺序页/战斗/「匹配已取消」弹窗，标签就没了。
+        不能改用「确定 按钮在不在」判断 —— 「匹配已取消」弹窗上同样有个 确定，
+        会被误判成还在选人页，然后接着点、把点击丢到大厅上。
+        也不能全屏找 1P —— 战斗 HUD 里也有 1P 字样，会误判成没离开。
+
+        confirm_gap > 0 时做二次复核（首判「不在」后等 gap 秒再测一次）：
+        禁用→选用阶段切换的 0.5~1.5s 过渡里 1P 会短暂消失，单次判定必然误报
+        （2026-10-24 现场：禁用点完 6 秒就判「页面消失」，把整个选用阶段跳过）。
+        """
+        bgr = self._grab_bgr(ctrl)
+        if bgr is None:
+            return False
+        th = self._p1_th(param)
+        if self._p1_score(cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), param) >= th:
+            return False
+        if confirm_gap > 0:
+            time.sleep(confirm_gap)
+            bgr2 = self._grab_bgr(ctrl)
+            if bgr2 is not None and self._p1_score(
+                    cv2.cvtColor(bgr2, cv2.COLOR_BGR2GRAY), param) >= th:
+                print("[MasterPick] 1P 标签只是短暂消失（阶段切换过渡），仍按还在选人页处理",
+                      flush=True)
+                return False
+        return True
+
+    def _confirmed_away(self, gray, param):
+        """确证「已经离开选人页」：必须看见别的界面的正向锚点才算。
+
+        为什么需要：阶段切换过渡、对手确认遮罩、镜头淡入淡出都会让 1P 标签
+        短暂消失，此时若按「1P 不见 = 离开」放行，就会把整个选用阶段跳过
+        （2026-10-24 现场 11:01:11：禁用点完 6 秒就放行，0 个选用直接进战斗）。
+        这里只在真的看到 战斗 HUD / 竞技场主页 / 大师团页 / 主城 时才认。
+
+        返回命中的界面名（str）或 None。
+        """
+        H, W = gray.shape[:2]
+        full = (0, 0, W, H)
+        for rel, th, name in (("battle_bar", 0.8, "战斗画面"),
+                              ("battle_btn", 0.8, "战斗画面"),
+                              ("arena_title", 0.8, "竞技场主页"),
+                              ("main_arena_btn", 0.85, "主城")):
+            tpl = self._load_rel(rel)
+            if tpl is None:
+                continue
+            x, y, w, h = full
+            patch = gray[y:y + h, x:x + w]
+            if patch.shape[0] < tpl.shape[0] or patch.shape[1] < tpl.shape[1]:
+                continue
+            if float(cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED).max()) >= th:
+                return name
+        tpl = self._load_rel("master_title")
+        if tpl is not None:
+            rx, ry, rw, rh = param.get("team_roi", [380, 20, 560, 90])
+            patch = gray[max(0, ry):min(H, ry + rh), max(0, rx):min(W, rx + rw)]
+            if patch.shape[0] >= tpl.shape[0] and patch.shape[1] >= tpl.shape[1]:
+                if float(cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED).max()) >= 0.9:
+                    return "大师团页"
+        return None
+
+    def _wait_pick_phase(self, ctrl, param):
         """等「选用阶段」真的开始（判据：底部橙字「温馨提示：请选择格斗家」）。
 
+        返回 True  = 已进入选用阶段，可以开始点格子；
+        返回 False = 确证已离开选人页（战斗/竞技场/主城），调用方直接放行；
+        返回 None  = 阶段超时（既没等到提示，也没确证离开）。
+
         2026-10-23 现场（v1.2.4）：禁用阶段点完「确定」后立刻去点角色，结果 9s 内
-        所有点击都没反应（勾不出现），前几个输入全被跳过，其中一轮还拖到倒计时归零
-        变成 0/3 全靠游戏随机。原因是点确定只代表我方完成，游戏要等对手也确认禁用
+        所有点击都没反应（勾不出现），前几个输入全被跳过，其中一轮还拖到倒计时
+        归零变成 0/3 全靠游戏随机。原因是点确定只代表我方完成，游戏要等对手也确认禁用
         才切进选用阶段，这段等待期（实测 1.7~17.7s）点格子是空转。
         现在禁用不点确定，靠这个提示确认阶段真的切过来了再开始点。
         模板取自录屏 1280 基准底部居中（x 584~682 / y 658~684）：
         285 帧里只有 10 帧命中（就是选用阶段那几秒），正例 0.986~1.000、反例 ≤0.359。
+
+        2026-10-24 修正：等的时候「1P 标签不见」不再当作离开。阶段切换过渡里
+        1P 会短暂消失，原实现一消失就 return False + 放行，导致整个选用阶段被
+        跳过（0 个选用直接进战斗）。现在只认 _confirmed_away 的确证结果。
         """
         tpl = self._load_rel("master_pick_tip")
         if tpl is None:
@@ -929,53 +1043,41 @@ class MasterPick(CustomAction):
         rx, ry, rw, rh = param.get("pick_phase_roi", [520, 645, 240, 70])
         deadline = time.time() + float(param.get("pick_phase_timeout", 30))
         t0 = time.time()
-        miss = 0
+        no_p1 = 0
+        warned = False
         while time.time() < deadline:
             bgr = self._grab_bgr(ctrl)
             if bgr is not None:
                 gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
                 H, W = gray.shape[:2]
+                # ① 正向：温馨提示出现 = 已进选用阶段
                 patch = gray[max(0, ry):min(H, ry + rh), max(0, rx):min(W, rx + rw)]
                 if patch.shape[0] >= tpl.shape[0] and patch.shape[1] >= tpl.shape[1]:
-                    r = cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED)
-                    _, mx, _, _ = cv2.minMaxLoc(r)
-                    if float(mx) >= th:
+                    mx = float(cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED).max())
+                    if mx >= th:
                         print(f"[MasterPick] 选用阶段已开始（温馨提示 {mx:.3f}，"
                               f"等了 {time.time() - t0:.1f}s）", flush=True)
                         return True
-            miss += 1
-            if miss % 3 == 0 and self._left_pick_page(ctrl, param):
-                print("[MasterPick] 等选用阶段期间选人页已消失", flush=True)
-                self._left_page = True
-                return False
+                # ② 确证离开：真的看到战斗/竞技场/主城才放行
+                away = self._confirmed_away(gray, param)
+                if away:
+                    print(f"[MasterPick] 等选用阶段期间已确认离开选人页（{away}）", flush=True)
+                    self._left_page = True
+                    return False
+                # ③ 1P 消失只记录，不据此放行（阶段切换会短暂消失）
+                if self._p1_score(gray, param) < self._p1_th(param):
+                    no_p1 += 1
+                    if no_p1 >= 3 and not warned:
+                        warned = True
+                        print("[MasterPick] 1P 标签暂时看不见（阶段切换过渡），继续等温馨提示",
+                              flush=True)
+                else:
+                    no_p1 = 0
+                    warned = False
             time.sleep(0.4)
         print(f"[MasterPick] 等选用阶段超时（{param.get('pick_phase_timeout', 30)}s）",
               flush=True)
-        return False
-
-    def _left_pick_page(self, ctrl, param) -> bool:
-        """当前是否已经不是选人页（判据：左上「1P」标签是否还在）。
-
-        选人页固定会在 (405,363) 90×50 处显示 1P 标签（三帧实测 0.995~0.996），
-        倒计时归零游戏接管后会跳到顺序页/战斗/「匹配已取消」弹窗，标签就没了。
-        不能改用「确定 按钮在不在」判断 —— 「匹配已取消」弹窗上同样有个 确定，
-        会被误判成还在选人页，然后接着点、把点击丢到大厅上。
-        也不能全屏找 1P —— 战斗 HUD 里也有 1P 字样，会误判成没离开。
-        """
-        tpl = self._load_rel("pick_wait")
-        if tpl is None:
-            return False
-        bgr = self._grab_bgr(ctrl)
-        if bgr is None:
-            return False
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-        rx, ry, rw, rh = param.get("pick_page_roi", [340, 320, 240, 140])
-        H, W = gray.shape[:2]
-        patch = gray[max(0, ry):min(H, ry + rh), max(0, rx):min(W, rx + rw)]
-        if patch.shape[0] < tpl.shape[0] or patch.shape[1] < tpl.shape[1]:
-            return False
-        r = cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED)
-        return float(r.max()) < float(param.get("pick_page_threshold", 0.8))
+        return None
 
     # ---------------- 工具 ----------------
     def _grab_bgr(self, ctrl):

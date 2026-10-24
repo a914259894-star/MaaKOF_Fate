@@ -71,6 +71,13 @@
 - **`_load_tpl(rel)` 的根是 `_ARENA_DIR`（`image/arena`）**：`lose_text` 不能写成 `arena/lose_text`（子目录才带前缀，如 `wrong/wrong_shop`）。写错只打印「缺少模板」并返回 None，会静默失效。
 - 首轮检查要推迟：`next_result_check = time.time() + result_interval`，**不能初值 0**（否则进循环第一件事就是查结算，白等半秒）。
 
+## 大师选人「阶段过渡」不能当「页面离开」（v1.2.11，勿再改回单次判定）
+- **禁用→选用阶段切换的过渡里 1P 标签会短暂消失**（0.5~1.5s），`_left_pick_page` 单次判定必然误报。2026-10-24 现场：禁用点完 6 秒就判「选人页已消失」→ `run()` 直接 `return True` 放行 → **整个选用阶段跳过，0 个选用直接进战斗**（用户描述「选人不动了」）。
+- `_wait_pick_phase` 现在是**三态**：True=温馨提示命中、False=**确证**离开（`_confirmed_away` 看见 battle_bar/battle_btn/arena_title/main_arena_btn/master_title 之一）、None=单纯超时。超时后 1P 不在 → 直接选（不点确定，点了等于提前结束选人）；1P 还在 → 点确定走旧路径。
+- `_left_pick_page(ctrl, param, confirm_gap=0.5)` 带二次复核，用于点格失败收手与选人收尾；`_p1_score()` 模板缺失时返回 1.0（保守当「还在」）。
+- 选人页/阶段模板取值：`pick_wait`(1P) ROI [340,320,240,140] ≥0.8；`master_pick_tip` ROI [520,645,240,70] ≥0.75。真实帧标定：禁用阶段 `master_frames/f_0010.jpg`（tip 0.252）、选用阶段 `f_0027.jpg`（tip 0.987）。
+- **遗留**：`_cell_taken` 不认 2P 角标（f_0010 的格 (1,1) 有蓝色「2P」= 对手已占），兜底会去点它，待补模板。
+
 ## 协作偏好
 - base pipeline 参数保持 MAAFramework 规范默认值（如 quick_pick:true），个性化由 interface.json 选项 override 覆盖，不要改 base 默认。
 - MaaDebugger v1.17 是裸流水线调试器：不渲染 select/input 选项，用 Pipeline Override JSON 注参。**它完全不会读 interface.json、也不会拉起 agent**（源码 grep 无 interface/child_exec）——Agent Identifier 的 CONNECT 只是创建带该 identifier 的监听端并等 5s（`set_timeout(5000)`），必须先在终端手动跑 `assets> libs\python\python.exe agent\main.py <identifier>`（identifier 用输入框里那个，持久保存在 STORAGE），agent 存活期间点 CONNECT 才能连上。
