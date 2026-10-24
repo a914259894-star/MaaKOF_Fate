@@ -40,6 +40,7 @@
 - **阶段切换不能靠点「确定」推进**：禁用点确定只是我方声明完成，游戏要等对手确认（1.7~17.7s 空转，会耗掉前几个输入甚至拖到倒计时归零）。正解：不点确定，等新阶段锚点出现 —— 选用阶段 = 底部橙字「温馨提示：请选择格斗家」`arena/master_pick_tip.png` ROI [520,645,240,70] ≥0.75（正例 0.986~1.000 / 反例 ≤0.359）。
 - **「阶段过渡」≠「页面离开」（v1.2.11）**：过渡期 1P 标签会短暂消失 0.5~1.5s，单次 `_left_pick_page` 必然误报 → 现场禁用后 6s 就判离开、整个选用阶段被跳过（0 选用直接进战斗）。现在 `_wait_pick_phase` 三态：True=提示命中 / False=**确证**离开（`_confirmed_away` 看见 battle_bar|battle_btn|arena_title|main_arena_btn|master_title）/ None=超时（1P 不在→直接选，不点确定；1P 还在→点确定走旧路径）。`_left_pick_page(confirm_gap=0.5)` 带二次复核，`_p1_score()` 模板缺失时返回 1.0（保守当还在）。
 - 选人页锚点 `pick_wait`(1P) ROI [340,320,240,140] ≥0.8。真实帧标定：禁用阶段 `debug/master_frames/f_0010.jpg`（tip 0.252）、选用阶段 `f_0027.jpg`（tip 0.987）。
+- **阶段时长（用户 2026-10-24 补充）：禁用 20s、选用 30s 倒计时**。所以 `pick_phase_timeout=45`（>20s+切换动画+0.4s 轮询），`ban_min_wait=22` 强制下限（**22s 内绝不点确定**：禁用里点等于白点，若已进选用则等于提前结束选人），`Arena_MasterPick.timeout=240s`；等待每 5s 打进度。**改这些必须同步改 interface.json「大师选人栏位」option 里那块 `custom_action_param`**（整块替换，只改 arena.json 会被覆盖回旧值）。
 - 遗留：`_cell_taken` 不认 2P 角标（f_0010 格(1,1) 有蓝「2P」= 对手已占），兜底会去点它，待补模板。
 
 ## 大师团页（v1.2.6 / v1.2.8 / v1.2.9）
