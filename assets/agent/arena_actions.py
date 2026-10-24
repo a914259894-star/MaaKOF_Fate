@@ -519,7 +519,10 @@ class MasterPick(CustomAction):
         "ban_confirm": false,     // 禁用阶段是否点「确定」（默认不点，见下）
         "confirm_xy": [622, 638], // 「确定」按钮（与 1v1 同位置）
         "pick_page_timeout": 60,  // 等选人页出现的秒数
-        "pick_phase_timeout": 30, // 禁用结束后等「选用阶段」真正开始的秒数
+        // 禁用阶段自带 20s 倒计时（我方点完禁用到游戏真的切阶段，最坏要等满 20s），
+        // 所以等待上限必须 > 20s + 切换动画 + 轮询误差，取 45s。
+        "pick_phase_timeout": 45,
+        "ban_min_wait": 22,       // 禁用阶段开始后至少等这么久，绝不在此期间点「确定」
         "pick_phase_roi": [520, 645, 240, 70],  // 底部「温馨提示」ROI（x,y,w,h）
         "pick_phase_threshold": 0.75,           // 温馨提示命中阈值（正例 ≥0.986）
         "pick_page_roi": [340, 320, 240, 140],  // 左上「1P」标签 ROI（判断选人页还在不在）
@@ -592,8 +595,11 @@ class MasterPick(CustomAction):
                     p1_alive = self._p1_score(
                         cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY), param) >= self._p1_th(param)
                 if p1_alive:
-                    print("[MasterPick] [!] 迟迟没进选用阶段（1P 仍在），退回旧路径：点「确定」再试",
-                          flush=True)
+                    # 能走到这里说明已经等满 pick_phase_timeout（≥ ban_min_wait 22s），
+                    # 而禁用阶段最长只有 20s —— 游戏是真卡在禁用阶段没推进，
+                    # 这时点「确定」是唯一能推它一把的动作。
+                    print("[MasterPick] [!] 已等超上限仍停在禁用阶段（1P 仍在），"
+                          "点「确定」推一下", flush=True)
                     self._click_confirm(ctrl, param, "禁用")
                     time.sleep(float(param.get("confirm_settle", 1.2)))
                 else:
@@ -1034,6 +1040,14 @@ class MasterPick(CustomAction):
         2026-10-24 修正：等的时候「1P 标签不见」不再当作离开。阶段切换过渡里
         1P 会短暂消失，原实现一消失就 return False + 放行，导致整个选用阶段被
         跳过（0 个选用直接进战斗）。现在只认 _confirmed_away 的确证结果。
+
+        时间预算（用户 2026-10-24 补充：禁用阶段最长能有 20s）：
+          禁用阶段自带 20s 倒计时，我方点完 2 个禁用后游戏仍要等倒计时/对手，
+          最长会等满 20s 才切进选用。所以：
+            · pick_phase_timeout 默认 45s（20s 倒计时 + 切换动画 + 轮询误差）；
+            · ban_min_wait 默认 22s —— 不到这个时长一律继续等，绝不点「确定」，
+              因为此时阶段很可能还在禁用中，点确定毫无意义（只是我方声明完成）；
+            · 每 5s 打一行进度，长等待在日志里看得见，不会被误当成卡死。
         """
         tpl = self._load_rel("master_pick_tip")
         if tpl is None:
@@ -1041,10 +1055,17 @@ class MasterPick(CustomAction):
             return True
         th = float(param.get("pick_phase_threshold", 0.75))
         rx, ry, rw, rh = param.get("pick_phase_roi", [520, 645, 240, 70])
-        deadline = time.time() + float(param.get("pick_phase_timeout", 30))
+        timeout = float(param.get("pick_phase_timeout", 45))
+        min_wait = float(param.get("ban_min_wait", 22))
+        if timeout < min_wait:
+            print(f"[MasterPick] pick_phase_timeout={timeout:.0f}s 小于禁用阶段最长等待 "
+                  f"{min_wait:.0f}s，按 {min_wait:.0f}s 执行", flush=True)
+            timeout = min_wait
+        deadline = time.time() + timeout
         t0 = time.time()
         no_p1 = 0
         warned = False
+        next_tick = t0 + 5.0
         while time.time() < deadline:
             bgr = self._grab_bgr(ctrl)
             if bgr is not None:
@@ -1074,9 +1095,13 @@ class MasterPick(CustomAction):
                 else:
                     no_p1 = 0
                     warned = False
+            now = time.time()
+            if now >= next_tick:
+                next_tick = now + 5.0
+                print(f"[MasterPick] 仍在等选用阶段…已等 {now - t0:.0f}s"
+                      f"（禁用阶段倒计时最长 20s，上限 {timeout:.0f}s）", flush=True)
             time.sleep(0.4)
-        print(f"[MasterPick] 等选用阶段超时（{param.get('pick_phase_timeout', 30)}s）",
-              flush=True)
+        print(f"[MasterPick] 等选用阶段超时（{timeout:.0f}s）", flush=True)
         return None
 
     # ---------------- 工具 ----------------

@@ -288,11 +288,26 @@
         "custom_action": "MasterTeamFix",
         "custom_action_param": {
             "slots": [
-                [126, 640],
-                [262, 640],
-                [400, 640],
-                [537, 640],
-                [674, 640]
+                [
+                    126,
+                    640
+                ],
+                [
+                    262,
+                    640
+                ],
+                [
+                    400,
+                    640
+                ],
+                [
+                    537,
+                    640
+                ],
+                [
+                    674,
+                    640
+                ]
             ],
             "click_dy": 42,
             "card": "master_card_ssr",
@@ -306,12 +321,23 @@
             "mark_poll": 0.15,
             "max_drags": 0,
             "swipe": {
-                "from": [740, 640],
-                "to": [140, 640],
+                "from": [
+                    740,
+                    640
+                ],
+                "to": [
+                    140,
+                    640
+                ],
                 "ms": 350,
                 "settle_ms": 400
             },
-            "page_roi": [380, 20, 560, 90],
+            "page_roi": [
+                380,
+                20,
+                560,
+                90
+            ],
             "page_threshold": 0.85
         },
         "pre_delay": 200,
@@ -372,7 +398,8 @@
                 638
             ],
             "pick_page_timeout": 60,
-            "pick_phase_timeout": 30,
+            "pick_phase_timeout": 45,
+            "ban_min_wait": 22,
             "pick_phase_roi": [
                 520,
                 645,
@@ -393,7 +420,7 @@
             ],
             "pick_page_threshold": 0.8
         },
-        "timeout": 180000,
+        "timeout": 240000,
         "next": [
             "Arena_WaitBattle",
             "Arena_MasterPage",
