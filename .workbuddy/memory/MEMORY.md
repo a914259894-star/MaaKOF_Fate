@@ -39,7 +39,7 @@
 - `Arena_RankPage`：wrong_rank ROI[0,0,340,110] ≥0.8 → Custom `ArenaRankBack` 点红箭头回主城；连 3 次进不去 `return False`。
 - `Arena_StuckRecover`：Custom `ArenaStuckBack` 静默观察 15s，见战斗/竞技场/大师团/主城/结算即放行；**只在 pick_wait 落 ROI[340,320,240,140] ≥0.85** 才点返回。**1P 必须限定 ROI，全屏找会在战斗 HUD 命中**。
 - 两者已挂进 1v1 / 大师两条导航链的全部 next。
-- `Arena_RankUp`（v1.2.14）：胜利后「KOF段位提升」全屏弹窗，`rank_up_title` ROI[300,60,720,130] ≥0.8（弹窗 1.0/其它 ≤0.248）→ 点确认 (639,611)。它盖住 win_text 且确认键不在盲点 → CombatFighter `_rank_up_hit` 命中即 break；Fight_Once/Fight_Win/Fight_Lose/SettleOk/LeaveSettle/UnknownBack 的 next 首位都挂它。
+- `Arena_RankUp`：胜利后「KOF段位提升」全屏弹窗，**顺序=结算页→点确认→它，不顶替结算页**。`rank_up_title` ROI[300,60,720,130] ≥0.8（弹窗 1.0/其它 ≤0.248）→ 点确认 (639,611)。确认键不在盲点 → CombatFighter `_rank_up_hit` 命中即 break；挂 Fight_Once/SettleOk/LeaveSettle/UnknownBack 首位（Fight_Win/Lose 不需要）。
 
 ## 工具
 - base pipeline 用默认值，个性化走 option。

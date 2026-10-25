@@ -272,7 +272,6 @@
         "action": "DoNothing",
         "timeout": 120000,
         "next": [
-            "Arena_RankUp",
             "Arena_SettleOk"
         ]
     },
@@ -284,7 +283,6 @@
         "action": "DoNothing",
         "timeout": 120000,
         "next": [
-            "Arena_RankUp",
             "Arena_SettleOk"
         ]
     }
