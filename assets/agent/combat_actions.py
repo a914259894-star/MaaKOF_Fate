@@ -243,13 +243,11 @@ class CombatFighter(CustomAction):
                         print("[CombatFighter] 检测到主城界面（返回键多按了），立即停手",
                               flush=True)
                         break
-                    # 段位提升弹窗（v1.2.14）：胜利后可能弹「KOF段位提升」全屏遮挡，
-                    # 它的「确认」在 (639,611)，不在任何盲点坐标上——不认出来就会一直
-                    # 空点到 900s。认出来立刻收手，交给流水线 Fight_Once.next →
-                    # Arena_RankUp 点确认。
+                    # 段位提升弹窗（v1.2.17）：胜利结算点完「确认」后才会弹，确认键
+                    # (639,611) 不在任何盲点坐标上，认出来立刻收手交给 Arena_RankUp。
                     if self._rank_up_hit(gray, param):
-                        print("[CombatFighter] 检测到「KOF段位提升」弹窗，立即停手交给流水线",
-                              flush=True)
+                        print("[CombatFighter] 检测到「KOF段位提升」弹窗，立即停手"
+                              "（交给流水线点确认）", flush=True)
                         break
 
                 # 每 10s 打一个画面指纹：数字一直完全不变 => 截图是死的旧帧
@@ -417,17 +415,14 @@ class CombatFighter(CustomAction):
 
     @classmethod
     def _rank_up_hit(cls, gray, param) -> bool:
-        """胜利后的「KOF段位提升」全屏弹窗（v1.2.14）。
+        """胜利后的「KOF段位提升」全屏弹窗（v1.2.17，移植自 v1.2.14）。
 
         1v1 和大师赛胜利后都可能弹：顶部「KOF段位提升」+ 徽章 + 段位名 + 红色「确认」。
-        **顺序是「结算页 → 点结算确认 → 这个弹窗」**（用户 2026-10-25 确认），
-        它不会顶替结算页，所以 `Fight_Win` / `Fight_Lose` 不需要它。
-
-        但战斗循环必须认它：CombatFighter 是靠盲点把结算页的「确认」点掉的，点完之后
-        画面就换成这个弹窗——而它的确认键在 (639,611)，**不在任何盲点坐标上**
-        （盲点全在右侧技能区 x≈950~1220 / y≈200~630）。不认出来就会一直在弹窗上空点
-        到 900s。所以这里和 team/home 一样，命中就立刻收手，交给流水线
-        `Fight_Once.next → Arena_RankUp` 去点确认。
+        顺序是「结算页 → 点结算确认 → 这个弹窗」，它不会顶替结算页 —— 所以
+        `Fight_Win` / `Fight_Lose` 不需要它，但**战斗循环必须认它**：
+        CombatFighter 是靠盲点把结算页的「确认」点掉的，点完之后画面就换成这个
+        弹窗，而它的确认键在 (639,611)，**不在任何盲点坐标上**（盲点全在右侧技能区
+        x≈950~1220 / y≈200~630）。不认出来就会一直在弹窗上空点到超时。
 
         实测（1280 基准，用户 2026-10-25 截图）：本弹窗 ROI 内 1.000；
         选人页 0.10~0.16 / 结算页 0.24~0.25 / 大师团页 0.15 / 战斗 0.23。
@@ -798,167 +793,4 @@ class ArenaSafeBack(CustomAction):
         pos = CombatFighter._find_red_back(img) or (int(back_xy[0]), int(back_xy[1]))
         print(f"[SafeBack] 停在未知子页面，点返回 {pos}", flush=True)
         ctrl.post_click(int(pos[0]), int(pos[1])).wait()
-        return True
-
-
-class ArenaRankBack(CustomAction):
-    """误落到「排行榜」之类子页面时的自救（v1.2.13）。
-
-    现场（2026-10-24 13:52，v1.2.10）：选人完成后游戏卡在选人页 42s，自己退回
-    主城；`Arena_Enter_1v1` 正好在主城转场那一瞬点「KO 竞技」，点击被新界面
-    吸收 → 落到排行榜。排行榜上 `mode_1v1` 只有 0.68 < 阈值 0.7，而
-    `Arena_Enter_1v1.next` 当时只有 `Arena_Mode_1v1` 一项 → 30s 后节点超时 →
-    `Tasker.Task.Failed`，队列静默结束（外壳仍打「任务已全部完成」）。
-
-    本动作负责「点一次右上红色返回箭头回主城」，剩下的交给
-    `Arena_HomePage → Arena_Enter_1v1` 重新进竞技场。
-
-    连续次数保护：同一次任务里连续 `max_tries` 次都被叫进来（中间没有任何一次
-    成功进竞技场）→ 说明主城那个入口根本点不进去（多半 `main_arena_btn.png`
-    和排行榜图标太像），打印明确告警并 return False 让任务停下，绝不无限点。
-
-    custom_action_param:
-      {"back_xy": [1244,28], "max_tries": 3, "reset_after": 180,
-       "wait": 1.2, "main_threshold": 0.8, "home_threshold": 0.85}
-    """
-
-    _state = {"cnt": 0, "ts": 0.0}  # 类属性 → 所有实例共享（单进程内一份）
-
-    @classmethod
-    def _reset(cls) -> None:
-        cls._state["cnt"] = 0
-        cls._state["ts"] = 0.0
-
-    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
-        param = json.loads(argv.custom_action_param) if argv.custom_action_param else {}
-        ctrl = context.tasker.controller
-        _shot(ctrl)
-        img = ctrl.cached_image
-        if img is None or not getattr(img, "size", 0):
-            print("[RankBack] 截图失败，跳过返回", flush=True)
-            return True
-        gray = CombatFighter._to_gray_1280(img)
-
-        # 已经不在子页面了（转场/误判）→ 一下都别点，交给 next
-        if CombatFighter._main_page_hit(gray, float(param.get("main_threshold", 0.8))):
-            print("[RankBack] 已在竞技场/大师页，不点返回", flush=True)
-            self._reset()
-            return True
-        if CombatFighter._home_page_hit(gray, param):
-            print("[RankBack] 已在主城，不点返回", flush=True)
-            self._reset()
-            return True
-
-        now = time.time()
-        if now - self._state["ts"] > float(param.get("reset_after", 180)):
-            self._state["cnt"] = 0
-        self._state["cnt"] += 1
-        self._state["ts"] = now
-        max_tries = int(param.get("max_tries", 3))
-        if self._state["cnt"] > max_tries:
-            print(f"[RankBack] 连续 {max_tries} 次误落到排行榜/子页面都没能进竞技场，"
-                  f"停止自救——请检查 arena/main_arena_btn.png 是否和主城其它图标太像",
-                  flush=True)
-            self._reset()
-            return False  # 让节点失败、任务停下，而不是无限点
-
-        back_xy = param.get("back_xy", [1244, 28])
-        pos = CombatFighter._find_red_back(img) or (int(back_xy[0]), int(back_xy[1]))
-        print(f"[RankBack] 第 {self._state['cnt']} 次：停在子页面（排行榜等），点返回 {pos}",
-              flush=True)
-        ctrl.post_click(int(pos[0]), int(pos[1])).wait()
-        time.sleep(float(param.get("wait", 1.2)))
-        return True
-
-
-class ArenaStuckBack(CustomAction):
-    """「选人完却迟迟不进战斗」的静默观察 + 确证自救（v1.2.13）。
-
-    它放在 `Arena_Pick` / `Arena_WaitBattle` 的 next 末尾，用 DirectHit 保证一定
-    轮得到。所以第一件事是**先什么都不做**：grace 秒内每 poll 秒截一次图，只要
-    看到战斗栏/战斗按钮/竞技场页/大师团页/主城/结算，立刻放行让 next 接力——
-    正常流程在这里的最坏损耗只有 ~0.5s。
-
-    grace 到期后，只在「确证还停在选人页」（pick_recent 命中）时才点一次红色
-    返回：现场 13:52 那一局就是对手不确认、游戏自己也退不回来，画面 42s 纹丝
-    不动（`Arena_Mode_1v1` 连 8 轮都是 0.292144）。这时退出重匹比干等 300s 强。
-    **其它任何不确定的画面一律不动手**——宁可继续等，也绝不能往战斗中乱点。
-
-    custom_action_param:
-      {"grace": 15, "poll": 0.5, "back_xy": [1244,28],
-       "battle_threshold": 0.8, "page_threshold": 0.8,
-       "home_threshold": 0.85, "pick_threshold": 0.85,
-       "pick_roi": [340,320,240,140], "wait": 1.2}
-    """
-
-    _last = {"ts": 0.0}
-    # (页面名, 模板, 阈值参数名, 默认阈值) —— 命中任一条就视为「已经到别处了，别动手」
-    _ARRIVED = (
-        ("战斗", ("battle_bar", "battle_btn"), "battle_threshold", 0.8),
-        ("竞技场页", ("arena_title",), "page_threshold", 0.8),
-        ("大师团页", ("master_title",), "page_threshold", 0.8),
-        ("主城", ("main_arena_btn",), "home_threshold", 0.85),
-        ("结算页", ("win_text", "lose_text"), "page_threshold", 0.85),
-    )
-
-    @classmethod
-    def _page_of(cls, gray, param) -> str | None:
-        for name, rels, th_key, th_def in cls._ARRIVED:
-            th = float(param.get(th_key, th_def))
-            for rel in rels:
-                tpl = CombatFighter._load_tpl(rel)
-                if tpl is not None and CombatFighter._match_score(
-                        gray, tpl, (0, 0, gray.shape[1], gray.shape[0])) >= th:
-                    return name
-        # 选人页：**必须在 1P 标签的固定位置**（默认 340,320,240,140）找，不能全屏找
-        # —— 战斗 HUD 里也有「1P」字样，全屏匹配会在战斗中命中，然后误点返回。
-        # 实测（1280 基准）：选人页该 ROI 0.993~1.000 / 结算页 0.610 / 大师团页 0.539。
-        th = float(param.get("pick_threshold", 0.85))
-        roi = tuple(int(v) for v in param.get("pick_roi", [340, 320, 240, 140]))
-        tpl = CombatFighter._load_tpl("pick_wait")
-        if tpl is not None and CombatFighter._match_score(gray, tpl, roi) >= th:
-            return "选人页"
-        return None
-
-    def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
-        param = json.loads(argv.custom_action_param) if argv.custom_action_param else {}
-        grace = float(param.get("grace", 15))
-        poll = float(param.get("poll", 0.5))
-
-        # 连着被调用时不要反复阻塞：一次观察（grace 秒）+ 冷却 2s，之后才允许再观察
-        now = time.time()
-        if now < self._last["ts"]:
-            return True
-        self._last["ts"] = now + grace + 2.0
-
-        ctrl = context.tasker.controller
-        page = None
-        gray = None
-        t_end = time.time() + grace
-        while time.time() < t_end:
-            if context.tasker.stopping:
-                return True
-            _shot(ctrl)
-            img = ctrl.cached_image
-            if img is None or not getattr(img, "size", 0):
-                time.sleep(poll)
-                continue
-            gray = CombatFighter._to_gray_1280(img)
-            page = self._page_of(gray, param)
-            if page is not None and page != "选人页":
-                print(f"[StuckBack] {grace:.0f}s 观察期内已到达「{page}」，不动手", flush=True)
-                return True
-            time.sleep(poll)
-
-        if page == "选人页":
-            back_xy = param.get("back_xy", [1244, 28])
-            img = ctrl.cached_image
-            pos = CombatFighter._find_red_back(img) or (int(back_xy[0]), int(back_xy[1]))
-            print(f"[StuckBack] 已停在选人页 {grace:.0f}s 仍未进战斗（对手未确认/掉线），"
-                  f"点返回 {pos} 退出重匹", flush=True)
-            ctrl.post_click(int(pos[0]), int(pos[1])).wait()
-            time.sleep(float(param.get("wait", 1.2)))
-        else:
-            print(f"[StuckBack] {grace:.0f}s 内未识别出已知页面（page={page}），保持等待不动手",
-                  flush=True)
         return True
