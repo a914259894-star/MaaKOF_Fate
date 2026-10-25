@@ -243,6 +243,14 @@ class CombatFighter(CustomAction):
                         print("[CombatFighter] 检测到主城界面（返回键多按了），立即停手",
                               flush=True)
                         break
+                    # 段位提升弹窗（v1.2.14）：胜利后可能弹「KOF段位提升」全屏遮挡，
+                    # 它的「确认」在 (639,611)，不在任何盲点坐标上——不认出来就会一直
+                    # 空点到 900s。认出来立刻收手，交给流水线 Fight_Once.next →
+                    # Arena_RankUp 点确认。
+                    if self._rank_up_hit(gray, param):
+                        print("[CombatFighter] 检测到「KOF段位提升」弹窗，立即停手交给流水线",
+                              flush=True)
+                        break
 
                 # 每 10s 打一个画面指纹：数字一直完全不变 => 截图是死的旧帧
                 now = time.time()
@@ -405,6 +413,28 @@ class CombatFighter(CustomAction):
         roi = tuple(int(v) for v in param.get("home_roi", [0, 0, 0, 0]))
         if roi[2] <= 0 or roi[3] <= 0:
             roi = (0, 0, gray.shape[1], gray.shape[0])
+        return cls._match_score(gray, tpl, roi) >= th
+
+    @classmethod
+    def _rank_up_hit(cls, gray, param) -> bool:
+        """胜利后的「KOF段位提升」全屏弹窗（v1.2.14）。
+
+        1v1 和大师赛胜利后都可能弹：顶部「KOF段位提升」+ 徽章 + 段位名 + 红色「确认」。
+        它盖住整屏，后果连锁：win_text / settle_confirm 全被遮 → `Fight_Win` /
+        `Arena_SettleOk` 不命中；`Arena_LeaveSettle` 是 inverse 识别 → 反而命中，
+        跳去找页面后全不命中 → 超时失败；`Arena_UnknownBack` 会一直点右上红箭头
+        （这弹窗上没有返回键）→ 空转。
+        而且它的「确认」在 (639,611)，不在任何盲点坐标上——战斗循环不认它就会
+        白跑到 900s。所以这里和 team/home 一样，命中就立刻收手交给流水线。
+
+        实测（1280 基准，用户 2026-10-25 截图）：本弹窗 ROI 内 1.000；
+        选人页 0.10~0.16 / 结算页 0.24~0.25 / 大师团页 0.15 / 战斗 0.23。
+        """
+        tpl = cls._load_tpl("rank_up_title")
+        if tpl is None:
+            return False
+        th = float(param.get("rank_up_threshold", 0.8))
+        roi = tuple(int(v) for v in param.get("rank_up_roi", [300, 60, 720, 130]))
         return cls._match_score(gray, tpl, roi) >= th
 
     @classmethod

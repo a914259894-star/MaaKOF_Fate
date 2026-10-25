@@ -15,6 +15,7 @@
         "post_delay": 1500,
         "rate_limit": 3000,
         "next": [
+            "Arena_RankUp",
             "Fight_Win",
             "Fight_Lose",
             "Arena_MainPage",
@@ -262,6 +263,7 @@
         "rate_limit": 1000,
         "timeout": 60000,
         "next": [
+            "Arena_RankUp",
             "Arena_LeaveSettle",
             "Arena_SettleOk"
         ]
@@ -280,6 +282,7 @@
         "rate_limit": 500,
         "timeout": 60000,
         "next": [
+            "Arena_RankUp",
             "Arena_WaitBattle",
             "Arena_Mode_1v1",
             "Arena_Enter_1v1",
@@ -525,6 +528,39 @@
             "Arena_HomePage",
             "Arena_Enter_1v1",
             "Arena_Enter_Master"
+        ]
+    },
+    "Arena_RankUp": {
+        "recognition": "TemplateMatch",
+        "template": "arena/rank_up_title.png",
+        "green_mask": false,
+        "threshold": 0.8,
+        "roi": [
+            300,
+            60,
+            720,
+            130
+        ],
+        "action": "Click",
+        "target": [
+            590,
+            592,
+            98,
+            38
+        ],
+        "pre_delay": 300,
+        "post_delay": 1500,
+        "rate_limit": 1500,
+        "timeout": 30000,
+        "next": [
+            "Arena_SettleOk",
+            "Arena_MainPage",
+            "Arena_MasterPage",
+            "Arena_HomePage",
+            "Arena_Mode_1v1",
+            "Arena_Enter_1v1",
+            "Arena_Enter_Master",
+            "Arena_RankUp"
         ]
     }
 }

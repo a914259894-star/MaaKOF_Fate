@@ -59,10 +59,18 @@
                 0,
                 0,
                 0
+            ],
+            "rank_up_threshold": 0.8,
+            "rank_up_roi": [
+                300,
+                60,
+                720,
+                130
             ]
         },
         "timeout": 960000,
         "next": [
+            "Arena_RankUp",
             "Fight_Win",
             "Fight_Lose",
             "Arena_MainPage",
@@ -264,6 +272,7 @@
         "action": "DoNothing",
         "timeout": 120000,
         "next": [
+            "Arena_RankUp",
             "Arena_SettleOk"
         ]
     },
@@ -275,6 +284,7 @@
         "action": "DoNothing",
         "timeout": 120000,
         "next": [
+            "Arena_RankUp",
             "Arena_SettleOk"
         ]
     }
