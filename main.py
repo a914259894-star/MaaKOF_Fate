@@ -43,7 +43,7 @@ from maa.resource import Resource
 from maa.tasker import Tasker
 from maa.toolkit import Toolkit
 
-from register import register_all  # 战斗 + 你的流程的动作/识别统一注册
+from register import ensure_maa_option, register_all  # 战斗 + 你的流程的动作/识别统一注册
 
 # 完整刷本流程就绪后，把默认入口改成你的入口节点
 DEFAULT_ENTRY = "Fight_Once"
@@ -84,6 +84,8 @@ def find_device(args):
 
 def main():
     args = parse_args()
+    # 嵌入模式的 option 目录是 ./debug（见下面 init_option），没有就先补一份省资源配置
+    ensure_maa_option("./debug/maa_option.json")
     Toolkit.init_option("./debug")
 
     device = find_device(args)

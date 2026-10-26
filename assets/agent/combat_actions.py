@@ -17,6 +17,7 @@ import os
 import time
 
 import cv2
+import numpy as np
 
 from maa.context import Context
 from maa.custom_action import CustomAction
@@ -56,6 +57,88 @@ def _shot(ctrl) -> bool:
         print("[combat] 截图失败（cached_image 是旧帧！）", flush=True)
         return False
     return True
+
+
+# ================== 技能识别本地化（v1.2.18，纯性能优化，判定口径不变） ==================
+# 背景：CombatFighter 每轮都要判「替身是否发光」，原来走 context.run_recognition，
+# 一次就是 AgentClient 的跨进程往返（现场 maa.log 里 `handle_context_run_recognition`
+# 的 `leave, Xms`：P50 14ms / P90 46ms / 最大 121ms，另外还要算 agent 侧 socket 收发
+# 和跨进程线程唤醒）。而 SkillReadyBright 干的事只是「取 ROI → 算亮度占比 → 比阈值」，
+# 纯 numpy 实测 0.016ms。同一个口径在进程内直接算，等于白捡一次 IPC。
+#
+# 参数不写死：启动时从 resource/pipeline/combat.json 读 SkillReadyBright 节点的 roi
+# 和 custom_recognition_param。这样以后改 combat.json 的 roi/阈值，本地实现自动跟着变，
+# 不会出现「pipeline 改了、agent 里那份没改」的漂移。读不到就整体回落 IPC（行为不变）。
+
+_RECO_CFG: dict | None = None
+
+
+def _reco_cfg_path() -> str:
+    # _ARENA_DIR = .../resource/image/arena → .../resource/pipeline/combat.json
+    return os.path.normpath(os.path.join(_ARENA_DIR, "..", "..", "pipeline", "combat.json"))
+
+
+def _load_reco_cfg() -> dict:
+    """{节点名: {roi, channel, mode, threshold, v_thresh, confirm}}，只读一次。"""
+    global _RECO_CFG
+    if _RECO_CFG is not None:
+        return _RECO_CFG
+    cfg: dict = {}
+    try:
+        with open(_reco_cfg_path(), encoding="utf-8") as f:
+            nodes = json.load(f)
+        for name, node in nodes.items():
+            if not isinstance(node, dict):
+                continue
+            if node.get("custom_recognition") != "SkillReadyBright":
+                continue
+            p = node.get("custom_recognition_param") or {}
+            if isinstance(p, str):
+                p = json.loads(p)
+            roi = node.get("roi") or [0, 0, 0, 0]
+            if len(roi) != 4 or int(roi[2]) <= 0 or int(roi[3]) <= 0:
+                continue
+            cfg[name] = {
+                "roi": tuple(int(v) for v in roi),
+                "channel": str(p.get("channel", "v")).lower(),
+                "mode": str(p.get("mode", "median")).lower(),
+                "threshold": float(p.get("threshold", 128)),
+                "v_thresh": float(p.get("v_thresh", 160)),
+                "confirm": max(1, int(p.get("confirm", 1))),
+            }
+        print(f"[CombatFighter] 技能识别本地化：{len(cfg)} 个节点 {sorted(cfg)}"
+              "（口径取自 pipeline/combat.json）", flush=True)
+    except Exception as e:  # 文件缺失 / JSON 坏 / 路径不对 → 回落 IPC
+        print(f"[CombatFighter] 读取 pipeline 技能参数失败（{e}），技能识别回落 IPC", flush=True)
+        cfg = {}
+    _RECO_CFG = cfg
+    return cfg
+
+
+def _ready_metric(patch, channel: str, mode: str, v_thresh: float) -> float | None:
+    """与 combat_recognition._metric 逐行等价（输入 BGR patch）。
+
+    返回 None 表示 patch 形状不可用（调用方按未命中处理）。
+    """
+    if patch.ndim != 3 or patch.shape[2] != 3 or patch.size == 0:
+        return None
+    arr = patch.reshape(-1, 3).astype(np.float32)
+    if mode == "ratio":
+        v = arr.max(axis=1)
+        return float((v >= v_thresh).mean())
+    if channel == "v":
+        m = arr.max(axis=1)
+    elif channel == "s":
+        mx, mn = arr.max(axis=1), arr.min(axis=1)
+        m = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1.0) * 255.0, 0.0)
+    elif channel == "min_vs":
+        mx, mn = arr.max(axis=1), arr.min(axis=1)
+        v = mx
+        s = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1.0) * 255.0, 0.0)
+        m = np.minimum(v, s)
+    else:  # gray
+        m = 0.114 * arr[:, 0] + 0.587 * arr[:, 1] + 0.299 * arr[:, 2]
+    return float(m.mean()) if mode == "mean" else float(np.median(m))
 
 
 def _tap(ctrl, key: str, hold_ms: int = 60, contact: int = CONTACT_ATK) -> None:
@@ -277,13 +360,14 @@ class CombatFighter(CustomAction):
                         break
 
                 # 替身：受击发光才点，其余技能不识别
+                # v1.2.18：改走本地等价判定（_first_hit），不再每轮发一次 IPC；
+                # 命中逻辑（第一个命中的节点 → 点它的按钮）与原来逐字一致。
                 if img is not None and getattr(img, "size", 0) and recog_nodes:
-                    for node in recog_nodes:
-                        if self._hit_any(context, img, [node]):
-                            key = self._key_of(node)
-                            if key:
-                                _tap(ctrl, key, hold_ms=skill_hold)
-                            break
+                    node = self._first_hit(img, recog_nodes, context)
+                    if node:
+                        key = self._key_of(node)
+                        if key:
+                            _tap(ctrl, key, hold_ms=skill_hold)
 
                 for key in skill_cycle:
                     if context.tasker.stopping:
@@ -346,6 +430,29 @@ class CombatFighter(CustomAction):
         if patch.shape[0] < th or patch.shape[1] < tw:
             return -1.0
         return float(cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED).max())
+
+    @classmethod
+    def _ready_hit(cls, img, cfg) -> bool:
+        """单个 SkillReadyBright 节点的本地等价判定（img 为 BGR cached_image）。
+
+        roi 是 1280 基准；非 16:9 设备上 maa 会按实际宽度等比换算后传给
+        CustomRecognition，这里做同样的换算，保证与 IPC 版看到的是同一块像素。
+        """
+        x, y, w, h = cfg["roi"]
+        if img.ndim == 2:  # 图像通道降级（个别截图方式会给灰度图）时补成 BGR
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        H, W = img.shape[:2]
+        if W != 1280:
+            sc = W / 1280.0
+            x = int(round(x * sc))
+            y = int(round(y * sc))
+            w = max(1, int(round(w * sc)))
+            h = max(1, int(round(h * sc)))
+        patch = img[max(0, y):min(H, y + h), max(0, x):min(W, x + w)]
+        value = _ready_metric(patch, cfg["channel"], cfg["mode"], cfg["v_thresh"])
+        if value is None:
+            return False
+        return value >= cfg["threshold"]
 
     @classmethod
     def _detect_wrong(cls, gray, threshold: float):
@@ -679,6 +786,31 @@ class CombatFighter(CustomAction):
             if det and det.hit:
                 return True
         return False
+
+    @classmethod
+    def _first_hit(cls, img, nodes: list[str], context=None) -> str | None:
+        """按顺序返回第一个命中的节点名（都没命中返回 None）。
+
+        与原来「for node in nodes: if _hit_any([node]): 用它并 break」完全等价，
+        区别只在于：SkillReadyBright 且 confirm==1 的节点改在进程内用 numpy 算
+        （等价实现见 _ready_metric），省掉每轮一次的 IPC。其它节点（或参数读不到
+        文件时）仍走 context.run_recognition，行为不变。
+        """
+        cfgs = _load_reco_cfg()
+        for node in nodes:
+            cfg = cfgs.get(node)
+            if cfg is not None and cfg["confirm"] <= 1:
+                if cls._ready_hit(img, cfg):
+                    return node
+                continue
+            if context is None:
+                continue
+            try:
+                if cls._hit_any(context, img, [node]):
+                    return node
+            except Exception:
+                continue
+        return None
 
     @staticmethod
     def _key_of(node: str) -> str | None:

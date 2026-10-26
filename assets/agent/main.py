@@ -41,6 +41,9 @@ import register
 
 
 def main():
+    # 先补 config/maa_option.json（不存在才写）：默认 logging=false，避免每局写几百 MB
+    # 的 debug/maa.log。用户手动改过的一律不动 —— 要抓 maa.log 就把 logging 改回 true。
+    register.ensure_maa_option("config/maa_option.json")
     Toolkit.init_option("./")  # cwd 是 assets/，日志/可视化结果输出到 assets/config/、debug/
 
     if len(sys.argv) < 2:

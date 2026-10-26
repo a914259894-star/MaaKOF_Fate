@@ -128,6 +128,20 @@ def install_chores():
             print(f"[install] {name} 不存在，跳过")
 
 
+def install_config():
+    """把我们自己的 MaaFramework 运行选项带进安装包。
+
+    以前 install/config/maa_option.json 是手工放的，打包时容易被忘掉，
+    于是新装目录会用 MaaFramework 的默认值（logging=true → 每局写几百 MB 的
+    debug/maa.log，见 assets/config/maa_option.json 里的说明）。
+    """
+    src = working_dir / "assets" / "config"
+    if not src.is_dir():
+        print("[install] assets/config 不存在，跳过")
+        return
+    shutil.copytree(src, install_path / "config", dirs_exist_ok=True)
+
+
 def install_agent():
     # 本工程约定：agent 目录在 assets/agent/ 下（非官方样板的根目录 agent/）
     shutil.copytree(
@@ -185,6 +199,7 @@ if __name__ == "__main__":
     install_resource()
     install_chores()
     install_agent()
+    install_config()
     install_agent_runtime()
 
     print(f"Install to {install_path} successfully.")

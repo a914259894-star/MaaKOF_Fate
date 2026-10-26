@@ -45,4 +45,5 @@
 - base pipeline 用默认值，个性化走 option。
 - MaaDebugger 不读 interface.json、不拉 agent；先起 agent 再 CONNECT。
 - git 推送代理 7897/58867 时好时坏，失败换端口或直连。
+- **v1.2.18 起 `logging: false`（默认不写 `debug/maa.log`）**：要 maa.log 排查时先把安装目录 `config/maa_option.json` 的 `logging` 改回 `true` 复现一次，看完改回来。`save_on_error` 一直开着。
 - 排错看 `debug/on_error/<Node>_<时间>.png`。
