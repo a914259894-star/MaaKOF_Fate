@@ -283,7 +283,7 @@ class CombatFighter(CustomAction):
         # 实测依据见 debug/plan_v1.2.20_combat.md：一轮 600ms 里 300ms 花在 5 个技能的盲点上，
         # 而技能 CD 是 5~12s，约 93% 的点落在冷却里。
         ready_only = bool(param.get("ready_only", True))
-        ready_miss_rounds = max(1, int(param.get("ready_miss_rounds", 4)))
+        ready_miss_s = max(1.0, float(param.get("ready_miss_s", 10.0)))
         normal_per_round = max(1, int(param.get("normal_per_round", 1)))
         min_round = max(0.0, float(param.get("min_round_ms", 150)) / 1000.0)
         hp_drop_px = max(1, int(param.get("hp_drop_px", 4)))
@@ -292,7 +292,7 @@ class CombatFighter(CustomAction):
         ko_quiet_max = max(1.0, float(param.get("ko_quiet_max_s", 12)))
         # 就绪判定只在「读到了 pipeline 参数」时启用；读不到 → 退回原来的全量盲点
         reco_cfg = _load_reco_cfg() if ready_only else {}
-        ready_miss = 0           # 连续「一个技能都没就绪」的轮数（兜底用）
+        ready_miss_t0 = 0.0      # 「一个技能都没就绪」这段连续时间的起点（0 = 没在计时）
         hp_self_last = None      # 上一轮己方血条宽度（判掉血）
         enemy_gone = 0           # 敌方血条连续「空/测不到」的次数
         enemy_low = False        # 本轮是否见过敌方血条见底（KO 前置，防特效遮挡误判）
@@ -486,22 +486,31 @@ class CombatFighter(CustomAction):
                 # 约 93% 的点击落在冷却里，白耗 280ms/轮。
                 # 现在改成本地判就绪只点就绪的（5 个合计 0.41ms），省下的时间
                 # 直接进下一轮 → 技能 CD 好了最多 150ms 就被点上（原来最多 600ms）。
-                # 兜底：连续 ready_miss_rounds 轮一个都没就绪 → 直接退回「全量盲点」
-                # 并一直保持到本局结束。理由是「只盲点一轮」在阈值整体失效时反而
-                # 更差（技能频率从 1.7 次/s 掉到 0.3 次/s）；退回旧行为至少不倒退。
+                # 兜底：连续 ready_miss_s 秒一个都没就绪 → 直接退回「全量盲点」并保持
+                # 到本局结束。理由是「只盲点一轮」在阈值整体失效时反而更差（技能频率
+                # 从 1.7 次/s 掉到 0.3 次/s）；退回旧行为至少不倒退。
+                #
+                # !! 必须按「秒」而不是按「轮」计时 !!（v1.2.21 修正）
+                # 一轮只有 150~250ms，原来的 ready_miss_rounds=4 等于 0.6~1.0 秒。
+                # 而技能 CD 是 5~12 秒、5 个技能轮流用，录像里存在「连续 6 秒一个技能
+                # 都没就绪」的段（93~99s，还有 3 秒段的若干处）—— 按轮数算会在每局
+                # 开局几秒内必然误触发，把 P0 直接关掉，等于白做。改成 10 秒后，
+                # 正常战斗不会误触发（实测最长 6 秒），而阈值真失效时 10 秒内仍会兜住。
                 cycle = skill_cycle
                 if reco_cfg and img is not None and getattr(img, "size", 0):
                     ready = self._ready_keys(img, reco_cfg)
                     hit = [k for k in skill_cycle if k in ready]
                     if hit:
                         cycle = hit
-                        ready_miss = 0
+                        ready_miss_t0 = 0.0
                     else:
-                        ready_miss += 1
-                        if ready_miss >= ready_miss_rounds:
+                        now2 = time.time()
+                        if not ready_miss_t0:
+                            ready_miss_t0 = now2
+                        if now2 - ready_miss_t0 >= ready_miss_s:
                             reco_cfg = {}
-                            ready_miss = 0
-                            print(f"[CombatFighter] 连续 {ready_miss_rounds} 轮无技能就绪，"
+                            ready_miss_t0 = 0.0
+                            print(f"[CombatFighter] 连续 {ready_miss_s:.0f}s 无技能就绪，"
                                   "就绪阈值可能失效 → 本局退回全量盲点", flush=True)
                         else:
                             cycle = []   # 全在 CD：这轮不点技能，把时间让给普攻

@@ -89,7 +89,7 @@
                 38
             ],
             "ready_only": true,
-            "ready_miss_rounds": 4,
+            "ready_miss_s": 10,
             "normal_per_round": 1,
             "min_round_ms": 150,
             "hp_roi": [
