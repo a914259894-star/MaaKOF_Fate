@@ -204,6 +204,13 @@ class CombatFighter(CustomAction):
         // —— 主城兜底（2026-10-23 v1.2.7） ——
         "home_threshold": 0.85,        // 主城「KO 竞技」图标（main_arena_btn）阈值
         "home_roi": [0, 0, 0, 0]       // 0 = 全屏找（主城图标位置随 UI 版本会变）
+        // —— 防误点（2026-10-28 v1.2.19，每轮都判，不占 result_interval 节流） ——
+        "settle_threshold": 0.85,      // 结算页 win_text/lose_text 阈值
+        "settle_roi": [410, 70, 430, 130],  // 结算页顶部文字（胜利/失败各一张）
+        "arena_threshold": 0.85,       // 竞技场主页 arena_title 阈值
+        "arena_roi": [0, 0, 240, 90],  // 左上角标题（ROI 化比全屏快 60 倍）
+        "battle_threshold": 0.8,       // 战斗 HUD 血条段阈值（battle_hp1/2）
+        "battle_roi": [88, 14, 1104, 38]    // 两条血条所在横带
     }
 
     退出设计（2026-10-22 定稿，2026-10-23 v1.2.7 修正）：盲点速度快，可能误点进
@@ -218,6 +225,8 @@ class CombatFighter(CustomAction):
       ⑤ 无误点且非上述页面 → 检查失败结算文字（只查 lose），命中 break 交还 Fight_Lose
         → Arena_SettleOk 点确认（失败结算画面盲点点不掉，v1.1.3 实测卡死 900s 的教训；
         胜利结算盲点自己会点掉回主界面，不查 win）；
+        v1.2.19：win/lose 已经改成主循环每轮都查（_settle_hit，2.1ms），这条 4s 节流的
+        只查 lose，退化成双保险；胜负已决/一穿三那 5.7s 里的盲点仍在发，但坐标无害。
       ⑥ 画面连续 stall_checks 次几乎不动、又不是上面任何一种（如装备页）→ 未知界面
         兜底：点右上红色返回箭头自救（v1.2.2，最多 stall_max 次）；
       ⑦ 都未命中 → 还在战斗，继续盲点。
@@ -277,18 +286,15 @@ class CombatFighter(CustomAction):
         # v1.2.10：原来用 context.run_recognition 走一次 MaaFramework 识别，实测
         # 一次 IPC 往返 780ms（现场 21:07:07.082 → 07.880），开局白白站桩。改成和
         # 主循环相同的本地灰度匹配（约 20ms），诊断作用不变。
+        # v1.2.19：判据从 battle_bar/battle_btn 换成血条段（battle_hp1/2）——
+        # 旧的两张模板在战斗侧余量只有 0.049（0.849 vs 阈值 0.8），其中 battle_btn
+        # 全状态 ≤0.781 从来没到过阈值，等于废模板。
         _shot(ctrl)
         img0 = ctrl.cached_image
         if img0 is not None and getattr(img0, "size", 0):
             try:
                 g0 = self._to_gray_1280(img0)
-                roi0 = (0, 0, g0.shape[1], g0.shape[0])
-                ok = False
-                for rel in ("battle_bar", "battle_btn"):
-                    tpl = self._load_tpl(rel)
-                    if tpl is not None and self._match_score(g0, tpl, roi0) >= 0.8:
-                        ok = True
-                        break
+                ok = self._battle_hit(g0, param)
                 print(f"[CombatFighter] 开打画面=战斗界面: {ok}", flush=True)
             except Exception as e:
                 print(f"[CombatFighter] 开打自检异常: {e}", flush=True)
@@ -313,6 +319,21 @@ class CombatFighter(CustomAction):
                 gray = None
                 if img is not None and getattr(img, "size", 0):
                     gray = self._to_gray_1280(img)
+                    # ===== v1.2.19 防误点：结算页 / 竞技场主页，每轮都判 =====
+                    # 主防线：胜负结算页一出现就停手，「确定」交给流水线
+                    # （Fight_Win/Fight_Lose → Arena_SettleOk）。它把「结算页 →
+                    # 加载过场 → 竞技场主页」这三段的盲点全部清零。
+                    if self._settle_hit(gray, param):
+                        print("[CombatFighter] 检测到胜负结算页，立即停手"
+                              "（交给 Fight_Win/Fight_Lose）", flush=True)
+                        break
+                    # 兜底：结算页没认出来（UI 改版/淡入帧）时，盲点会把确定点掉、
+                    # 一路点到竞技场主页。这一页 8 个盲点全压在功能入口上
+                    # （黄金擂台 ×3、至尊赛、大神榜、竞技商店…），必须停手。
+                    if self._arena_page_hit(gray, param):
+                        print("[CombatFighter] 已回到竞技场主页，立即停手"
+                              "（交给流水线接 1v1）", flush=True)
+                        break
                     # 大师团页优先判（v1.2.6）：胜利用盲点退回大师团页时，这一页的
                     # 1137,632=匹配战斗、981,643=一键上阵，继续盲点会把底部角色行的
                     # 上阵角色点掉。判得越早越少误点，所以每轮都查（小 ROI，很便宜）。
@@ -540,6 +561,91 @@ class CombatFighter(CustomAction):
         th = float(param.get("rank_up_threshold", 0.8))
         roi = tuple(int(v) for v in param.get("rank_up_roi", [300, 60, 720, 130]))
         return cls._match_score(gray, tpl, roi) >= th
+
+    @classmethod
+    def _settle_hit(cls, gray, param) -> bool:
+        """胜负结算页判定（v1.2.19）—— 主防线。
+
+        实测（全流程录屏《拳皇·命运(7).mp4》逐帧，1280 基准）：
+          ROI [410,70,430,130] 内 win 模板：结算页 0.988~0.989；主城 0.221 /
+          一穿三 0.166 / 战斗 0.142 / 至尊赛 0.116 / 加载过场 -0.009。
+          可靠窗口 143.73（0.890）~146.06（黑屏）= 2.33s，按 600ms 一轮有 3~4 次机会；
+          两个模板合计 2.1ms。
+
+        为什么现在要查「胜利」：历史上故意不查，是怕「查询窗口期盲点点到确定键」。
+        但那条假设建立在「胜利后盲点自己会把确定点掉、回到竞技场主页就安全」之上。
+        现在竞技场主页右下角是「赏金擂台/黄金擂台」入口，盲点把确认点掉之后会一路
+        点进活动甚至开第二把（现场录屏 148.8~151.0：竞技场主页 → 至尊赛 → 匹配成功）。
+        所以改成「一认出结算页就停手」，点确定这件事交给流水线（节流 1s，比盲点准）。
+        """
+        th = float(param.get("settle_threshold", 0.85))
+        roi = tuple(int(v) for v in param.get("settle_roi", [410, 70, 430, 130]))
+        for rel in ("win_text", "lose_text"):
+            tpl = cls._load_tpl(rel)
+            if tpl is None:
+                continue
+            if cls._match_score(gray, tpl, roi) >= th:
+                return True
+        return False
+
+    @classmethod
+    def _arena_page_hit(cls, gray, param) -> bool:
+        """竞技场主页判定（v1.2.19）—— 结算页判定失效时的兜底。
+
+        竞技场主页的 8 个盲点坐标全压在功能入口上（skill1→至尊赛、skill2/3/roll→
+        黄金擂台、normal×3→大神榜/竞技商店、ult→1V1擂台争霸、burst→3V3黑晶迷阵），
+        在这一页发盲点几乎必然点进别的玩法。
+
+        实测（ROI [0,0,240,90]）：竞技场主页 0.991~0.994；至尊赛 0.565 / VS 0.519 /
+        加载过场 0.495 / 选人页 0.372 / 战斗 0.173 / 主城 0.245。阈值 0.85（余量 0.29），
+        成本 0.36ms（全屏匹配 arena_title 要 21.7ms，ROI 化后快 60 倍）。
+
+        这页在正常流程里只存在 0.56~0.66s，比一轮（600ms）略长，数学上必然覆盖到；
+        而且一旦停手画面就静止，流水线 0.5s 一轮一定接得住，不存在抢窗口。
+        """
+        tpl = cls._load_tpl("arena_title")
+        if tpl is None:
+            return False
+        th = float(param.get("arena_threshold", 0.85))
+        roi = tuple(int(v) for v in param.get("arena_roi", [0, 0, 240, 90]))
+        return cls._match_score(gray, tpl, roi) >= th
+
+    @classmethod
+    def _battle_hit(cls, gray, param) -> bool:
+        """「现在确实在战斗界面」判定（v1.2.19）—— 替换余量很薄的 battle_bar/battle_btn。
+
+        旧判据实测（44 帧全状态）：
+          battle_bar 战斗 0.849~0.926 / 非战斗最高 0.632（结算页），阈值 0.8 →
+            战斗侧余量只剩 0.049，UI 一改版就会漏判；
+          battle_btn 全状态最高 0.781（战斗内最高 0.752），**从来没到过阈值**，
+            等于一张废模板（节点是「任一命中」，所以它一直没暴露）。
+        更正一条旧记录：早前写的「战斗中 0.555 / 胜负已决 0.915」是把 VS 倒计时帧
+        当成了战斗帧，实测 VS 页 battle_bar 0.556、真正的战斗帧 0.915 —— 判据没反，
+        只是薄。
+
+        新判据用战斗顶部 HUD 的血条段：血条底板是不透明的，ROI 里要么是彩色填充
+        （血量）要么是暗色空槽，不会透出背景场景；别的界面在同一坐标上是什么就
+        是什么（蓝天空/沙漠/UI 面板），匹配不上。模板 71x24（一段血条，71px 正好是
+        血条上两处暗格之间的宽度）。
+
+        实测（44 帧全状态：主城/竞技场主页/VS/选人/战斗×11/胜负已决/一穿三/结算页/
+        加载过场/至尊赛）：
+          ROI [88,14,1104,38] 内两张模板取 max：战斗 0.962~1.000，
+          其余全部 ≤0.552（选人页最高 0.552，加载过场 0.327，结算页 0.450）。
+          阈值 0.8 → 两侧余量各 0.25/0.16；成本 0.89ms（两张一起，原来全屏两张 34ms）。
+
+        覆盖范围：1P 或 2P 任意一侧还剩一整段血（约 HP≥25%）即命中；两侧同时见底
+        才漏判 —— 此时本来也快分出胜负了，漏判只会让调用方多等一轮。
+        """
+        th = float(param.get("battle_threshold", 0.8))
+        roi = tuple(int(v) for v in param.get("battle_roi", [88, 14, 1104, 38]))
+        for rel in ("battle_hp1", "battle_hp2"):
+            tpl = cls._load_tpl(rel)
+            if tpl is None:
+                continue
+            if cls._match_score(gray, tpl, roi) >= th:
+                return True
+        return False
 
     @classmethod
     def _main_page_hit(cls, gray, threshold: float) -> bool:

@@ -1000,15 +1000,19 @@ class MasterPick(CustomAction):
         """
         H, W = gray.shape[:2]
         full = (0, 0, W, H)
-        for rel, th, name in (("battle_bar", 0.8, "战斗画面"),
-                              ("battle_btn", 0.8, "战斗画面"),
-                              ("arena_title", 0.8, "竞技场主页"),
-                              ("main_arena_btn", 0.85, "主城")):
+        # v1.2.19：战斗画面判据换成顶部血条段（battle_hp1/2，ROI 只在两条血条那条横带里）。
+        # 旧的 battle_bar/battle_btn 战斗侧余量只有 0.049（battle_bar 0.849 vs 阈值 0.8），
+        # 且 battle_btn 全状态 ≤0.781 从来没到过阈值。新判据实测：战斗 0.962~1.000，
+        # 其余界面 ≤0.552，阈值 0.8。ROI 化后两张模板合计 0.9ms（全屏各一次要 17ms×2）。
+        for rel, th, name, roi in (("battle_hp1", 0.8, "战斗画面", (88, 14, 1104, 38)),
+                                   ("battle_hp2", 0.8, "战斗画面", (88, 14, 1104, 38)),
+                                   ("arena_title", 0.8, "竞技场主页", full),
+                                   ("main_arena_btn", 0.85, "主城", full)):
             tpl = self._load_rel(rel)
             if tpl is None:
                 continue
-            x, y, w, h = full
-            patch = gray[y:y + h, x:x + w]
+            x, y, w, h = roi
+            patch = gray[max(0, y):min(H, y + h), max(0, x):min(W, x + w)]
             if patch.shape[0] < tpl.shape[0] or patch.shape[1] < tpl.shape[1]:
                 continue
             if float(cv2.matchTemplate(patch, tpl, cv2.TM_CCOEFF_NORMED).max()) >= th:

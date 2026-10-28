@@ -66,6 +66,27 @@
                 60,
                 720,
                 130
+            ],
+            "settle_threshold": 0.85,
+            "settle_roi": [
+                410,
+                70,
+                430,
+                130
+            ],
+            "arena_threshold": 0.85,
+            "arena_roi": [
+                0,
+                0,
+                240,
+                90
+            ],
+            "battle_threshold": 0.8,
+            "battle_roi": [
+                88,
+                14,
+                1104,
+                38
             ]
         },
         "timeout": 960000,

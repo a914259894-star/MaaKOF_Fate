@@ -222,8 +222,14 @@
     "Arena_WaitBattle": {
         "recognition": "TemplateMatch",
         "template": [
-            "arena/battle_bar.png",
-            "arena/battle_btn.png"
+            "arena/battle_hp1.png",
+            "arena/battle_hp2.png"
+        ],
+        "roi": [
+            88,
+            14,
+            1104,
+            38
         ],
         "green_mask": false,
         "threshold": 0.8,
@@ -266,6 +272,7 @@
         "timeout": 60000,
         "next": [
             "Arena_RankUp",
+            "Arena_MainPage",
             "Arena_WaitBattle",
             "Arena_Mode_1v1",
             "Arena_Enter_1v1",
