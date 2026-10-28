@@ -109,7 +109,9 @@
             "hp_drop_px": 4,
             "sub_burst_times": 2,
             "sub_burst_cd_s": 1.5,
-            "ko_quiet_max_s": 20
+            "ko_quiet_max_s": 20,
+            "ko_gone_s": 2.0,
+            "ko_low_px": 12
         },
         "timeout": 960000,
         "next": [

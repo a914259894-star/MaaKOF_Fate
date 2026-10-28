@@ -301,12 +301,21 @@ class CombatFighter(CustomAction):
         sub_burst_times = max(0, int(param.get("sub_burst_times", 2)))
         sub_burst_cd = max(0.0, float(param.get("sub_burst_cd_s", 1.5)))
         ko_quiet_max = max(1.0, float(param.get("ko_quiet_max_s", 12)))
+        # v1.2.23：KO 判定改成「按秒计时 + 必须真见过空血」，不再按轮数。
+        # v1.2.20 用的是「连续 3 轮测不到」，当时一轮 600ms = 1.8s 还够用；
+        # 可 v1.2.20 之后一轮只有 150~250ms，3 轮只剩 0.45~0.75s —— 一个大招
+        # 特效盖住血条半秒就被当成 KO。实机日志（v1.2.22）里 14 次「见底」中有
+        # 3 次是误判，静默 1.3~1.7s 后血条又回来了，而回来的宽度是 33/57/85px
+        # （根本不是满血 333px 的新回合）。真 KO 那次血条消失 6.2~14.6s。
+        ko_gone_s = max(1.0, float(param.get("ko_gone_s", 2.0)))
+        ko_low_px = max(1, int(param.get("ko_low_px", 12)))
         # 就绪判定只在「读到了 pipeline 参数」时启用；读不到 → 退回原来的全量盲点
         reco_cfg = _load_reco_cfg() if ready_only else {}
         ready_miss_t0 = 0.0      # 「一个技能都没就绪」这段连续时间的起点（0 = 没在计时）
         hp_self_last = None      # 上一轮己方血条宽度（判掉血）
-        enemy_gone = 0           # 敌方血条连续「空/测不到」的次数
-        enemy_low = False        # 本轮是否见过敌方血条见底（KO 前置，防特效遮挡误判）
+        enemy_gone_t0 = None     # 敌方血条「测不到」这段连续时间的起点（None = 没在计时）
+        enemy_low = False        # 是否见过敌方血条真的快空（≤ko_low_px，KO 前置）
+        enemy_min_px = None      # 本回合见过的最小敌方血条宽度（诊断日志用）
         ko_quiet = True          # P3 静默开关（血条判据失灵一次就关掉，本局不再用）
         sub_cd_until = 0.0       # 受击连点替身的冷却截止时刻
 
@@ -416,24 +425,15 @@ class CombatFighter(CustomAction):
                 # 偶发测不到也会被当成 KO，白白静默。
                 # 「车轮战」规则下新回合敌方满血登场（实测 831→1164），血条回到 >20px
                 # 就恢复出招；静默上限 ko_quiet_max_s（实测最长换场 7.9s）。
-                if hp_enemy is None:
-                    # 血条**消失**才是 KO 候选；只要血条还在（哪怕只剩 1px）就继续打。
-                    # v1.2.22 修：原来是「宽度 ≤15px 连续 3 次」就静默，实机反馈
-                    # 「一方血很少时突然不点了」—— 敌人剩十几像素时会被误判成 KO，
-                    # 静默 12s 不补刀，敌人反而把玩家打死。
-                    # 实测（拳皇·命运(9)）：敌人死后血条是「测不到」（连续 12~18.5s），
-                    # 而 32px / 70px 的低血段血条一直在 → 新判据下这两种都不会停手。
-                    if enemy_low:
-                        enemy_gone += 1
-                elif hp_enemy > 30:
-                    enemy_low = False
-                    enemy_gone = 0
-                else:
-                    # 见过低血（≤30px）才允许后面「血条消失」算 KO；血条还在则清零计数
-                    enemy_low = True
-                    enemy_gone = 0
-                if ko_quiet and enemy_gone >= 3:
-                    print("[CombatFighter] 敌方血量见底（KO/换场），静默等下一回合", flush=True)
+                now_ko = time.time()
+                enemy_low, enemy_gone_t0, enemy_min_px, ko_fire = self._ko_step(
+                    hp_enemy, now_ko, enemy_low, enemy_gone_t0, enemy_min_px,
+                    ko_low_px, ko_gone_s)
+                if ko_quiet and ko_fire:
+                    gone = now_ko - enemy_gone_t0
+                    print(f"[CombatFighter] 敌方血条已消失 {gone:.1f}s"
+                          f"（此前最低 {enemy_min_px}px），判 KO/换场，静默等下一回合",
+                          flush=True)
                     res = self._quiet_wait(ctrl, context, param, ko_quiet_max, deadline)
                     if res == "page":
                         print("[CombatFighter] 静默期间出现结算/主城等页面，停手交给流水线",
@@ -441,8 +441,9 @@ class CombatFighter(CustomAction):
                         break
                     if res == "timeout":
                         ko_quiet = False  # 判据失灵（如血条被长期遮挡）→ 本局关掉静默
-                    enemy_gone = 0
+                    enemy_gone_t0 = None
                     enemy_low = False
+                    enemy_min_px = None
                     hp_self_last = None
                     next_result_check = time.time() + result_interval
                     continue
@@ -780,6 +781,47 @@ class CombatFighter(CustomAction):
         hp_self = (right - self_lo) if right is not None else None
         hp_enemy = (ene_hi - left) if left is not None else None
         return hp_self, hp_enemy
+
+    @classmethod
+    def _ko_step(cls, hp_enemy, now, enemy_low, enemy_gone_t0, enemy_min_px,
+                 ko_low_px, ko_gone_s):
+        """KO 判据推进一步（v1.2.23）。输入上一轮状态，返回新状态 + 是否该静默。
+
+        返回 (enemy_low, enemy_gone_t0, enemy_min_px, fire)。
+
+        三个条件同时满足才 fire：
+          1. 本轮敌方血条**测不到**（hp_enemy is None）；
+          2. 本回合此前见过 ≤ko_low_px 的血条 —— 真被打空了，而不是特效盖住。
+             实测真 KO 前最后一帧血条是 4px / 8px；v1.2.22 误判那三次被遮挡时
+             血条还有 33/57/85px，靠这一条直接排除掉。
+          3. 血条连续消失 ≥ko_gone_s 秒。**必须是秒，不能是「连续 N 轮」**：
+             一轮 150~250ms，3 轮只有 0.45~0.75s，大招特效轻松盖住；真 KO 那次
+             血条是消失 6.2~14.6s，2 秒的余量非常大。
+
+        兜底：没赶上「见过空血」那一帧（伤害一次打掉 20px 以上、血条直接从 30px
+        跳到消失）时，只要血条消失满 2×ko_gone_s（=4s）也算 KO —— 特效遮挡实测
+        最长 1.7s，撑不到 4s；不兜这一条就会在 KO 定格上一直盲点到结算页。
+
+        抽成独立方法是为了让 `debug/_test_v1223.py` 直接调真身做回归，
+        避免测试里复制一份逻辑然后慢慢漂移（v1.2.22 的测试就是这么写的）。
+        """
+        if hp_enemy is not None:
+            enemy_min_px = (hp_enemy if enemy_min_px is None
+                            else min(enemy_min_px, hp_enemy))
+        if hp_enemy is None:
+            if enemy_gone_t0 is None:
+                enemy_gone_t0 = now
+        elif hp_enemy > ko_low_px:
+            enemy_low = False
+            enemy_gone_t0 = None
+        else:
+            # 见过空血（≤ko_low_px）才允许后面「血条消失」按快阈值算 KO
+            enemy_low = True
+            enemy_gone_t0 = None
+        limit = ko_gone_s if enemy_low else 2.0 * ko_gone_s
+        fire = (enemy_gone_t0 is not None
+                and now - enemy_gone_t0 >= limit)
+        return enemy_low, enemy_gone_t0, enemy_min_px, fire
 
     def _quiet_wait(self, ctrl, context, param, max_s: float, deadline=None) -> str:
         """P3 静默期：一方 KO / 换场时只观察不点击，等新回合。
