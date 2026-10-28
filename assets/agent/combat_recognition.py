@@ -74,6 +74,7 @@ class SkillReadyBright(CustomRecognition):
         threshold = float(param.get("threshold", 128))
         mode = str(param.get("mode", "median")).lower()
         v_thresh = float(param.get("v_thresh", 160))
+        s_thresh = float(param.get("s_thresh", 70))
         confirm = max(1, int(param.get("confirm", 1)))
 
         img = argv.image
@@ -91,7 +92,7 @@ class SkillReadyBright(CustomRecognition):
             return CustomRecognition.AnalyzeResult(box=None, detail={})
 
         patch = img[y1:y2, x1:x2]  # BGR
-        value = _metric(patch, channel, mode, v_thresh=v_thresh)
+        value = _metric(patch, channel, mode, v_thresh=v_thresh, s_thresh=s_thresh)
 
         box = (x, y, w, h)
         hit = value >= threshold
@@ -107,15 +108,27 @@ class SkillReadyBright(CustomRecognition):
         )
 
 
-def _metric(patch: np.ndarray, channel: str, mode: str, v_thresh: float = 160) -> float:
+def _metric(patch: np.ndarray, channel: str, mode: str, v_thresh: float = 160,
+            s_thresh: float = 70) -> float:
     """计算小块图像的亮度/饱和度度量值。
 
-    median/mean 模式返回 0~255；ratio 模式返回亮像素占比 0~1（V >= v_thresh）。
+    median/mean 模式返回 0~255；ratio / bc 模式返回像素占比 0~1。
+
+    bc（bright & colorful）是 v1.2.22 给秘卷加的：只数「既亮又彩」的像素
+    （V >= v_thresh 且 S >= s_thresh）。原因是 ratio 只看亮不亮，而冷却中的
+    技能按钮中央有**纯白秒数**（V=255、S≈0）会把 ratio 顶到 1.0，比就绪态
+    （整颗亮彩图标）还高 → 判反。加饱和度门槛后白字被排除：
+      实测（拳皇·命运(9) 427 帧）秘卷 就绪 0.54 / 冷却 0.00~0.19 / 白字秒数 0.01。
     """
     arr = patch.reshape(-1, 3).astype(np.float32)
     if mode == "ratio":
         v = arr.max(axis=1)
         return float((v >= v_thresh).mean())
+    if mode == "bc":
+        mx, mn = arr.max(axis=1), arr.min(axis=1)
+        v = mx
+        s = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1.0) * 255.0, 0.0)
+        return float(((v >= v_thresh) & (s >= s_thresh)).mean())
     if channel == "v":
         m = arr.max(axis=1)  # HSV 的 V = max(r,g,b)
     elif channel == "s":

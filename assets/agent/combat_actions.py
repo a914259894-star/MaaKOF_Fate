@@ -104,6 +104,7 @@ def _load_reco_cfg() -> dict:
                 "mode": str(p.get("mode", "median")).lower(),
                 "threshold": float(p.get("threshold", 128)),
                 "v_thresh": float(p.get("v_thresh", 160)),
+                "s_thresh": float(p.get("s_thresh", 70)),
                 "confirm": max(1, int(p.get("confirm", 1))),
             }
         print(f"[CombatFighter] 技能识别本地化：{len(cfg)} 个节点 {sorted(cfg)}"
@@ -115,10 +116,15 @@ def _load_reco_cfg() -> dict:
     return cfg
 
 
-def _ready_metric(patch, channel: str, mode: str, v_thresh: float) -> float | None:
+def _ready_metric(patch, channel: str, mode: str, v_thresh: float,
+                  s_thresh: float = 70) -> float | None:
     """与 combat_recognition._metric 逐行等价（输入 BGR patch）。
 
     返回 None 表示 patch 形状不可用（调用方按未命中处理）。
+
+    v1.2.22 新增 mode="bc"：只数「既亮又彩」的像素。秘卷按钮在冷却时中央是
+    纯白秒数（V=255、S≈0），ratio 会被顶到 1.0（比就绪还高）→ 判反；加 S 门槛后
+    白字不算数，实测就绪 0.54 / 冷却 0.00~0.19 / 白字 0.01。
     """
     if patch.ndim != 3 or patch.shape[2] != 3 or patch.size == 0:
         return None
@@ -126,6 +132,11 @@ def _ready_metric(patch, channel: str, mode: str, v_thresh: float) -> float | No
     if mode == "ratio":
         v = arr.max(axis=1)
         return float((v >= v_thresh).mean())
+    if mode == "bc":
+        mx, mn = arr.max(axis=1), arr.min(axis=1)
+        v = mx
+        s = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1.0) * 255.0, 0.0)
+        return float(((v >= v_thresh) & (s >= s_thresh)).mean())
     if channel == "v":
         m = arr.max(axis=1)
     elif channel == "s":
@@ -405,15 +416,21 @@ class CombatFighter(CustomAction):
                 # 偶发测不到也会被当成 KO，白白静默。
                 # 「车轮战」规则下新回合敌方满血登场（实测 831→1164），血条回到 >20px
                 # 就恢复出招；静默上限 ko_quiet_max_s（实测最长换场 7.9s）。
-                if hp_enemy is not None and hp_enemy > 20:
+                if hp_enemy is None:
+                    # 血条**消失**才是 KO 候选；只要血条还在（哪怕只剩 1px）就继续打。
+                    # v1.2.22 修：原来是「宽度 ≤15px 连续 3 次」就静默，实机反馈
+                    # 「一方血很少时突然不点了」—— 敌人剩十几像素时会被误判成 KO，
+                    # 静默 12s 不补刀，敌人反而把玩家打死。
+                    # 实测（拳皇·命运(9)）：敌人死后血条是「测不到」（连续 12~18.5s），
+                    # 而 32px / 70px 的低血段血条一直在 → 新判据下这两种都不会停手。
+                    if enemy_low:
+                        enemy_gone += 1
+                elif hp_enemy > 30:
                     enemy_low = False
                     enemy_gone = 0
-                elif enemy_low and (hp_enemy is None or hp_enemy <= 15):
-                    enemy_gone += 1
-                elif hp_enemy is not None and hp_enemy <= 15:
-                    enemy_low = True
-                    enemy_gone += 1
                 else:
+                    # 见过低血（≤30px）才允许后面「血条消失」算 KO；血条还在则清零计数
+                    enemy_low = True
                     enemy_gone = 0
                 if ko_quiet and enemy_gone >= 3:
                     print("[CombatFighter] 敌方血量见底（KO/换场），静默等下一回合", flush=True)
@@ -602,7 +619,8 @@ class CombatFighter(CustomAction):
             w = max(1, int(round(w * sc)))
             h = max(1, int(round(h * sc)))
         patch = img[max(0, y):min(H, y + h), max(0, x):min(W, x + w)]
-        value = _ready_metric(patch, cfg["channel"], cfg["mode"], cfg["v_thresh"])
+        value = _ready_metric(patch, cfg["channel"], cfg["mode"], cfg["v_thresh"],
+                              cfg.get("s_thresh", 70))
         if value is None:
             return False
         return value >= cfg["threshold"]

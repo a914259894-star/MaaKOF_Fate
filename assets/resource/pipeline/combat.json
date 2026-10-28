@@ -109,7 +109,7 @@
             "hp_drop_px": 4,
             "sub_burst_times": 2,
             "sub_burst_cd_s": 1.5,
-            "ko_quiet_max_s": 12
+            "ko_quiet_max_s": 20
         },
         "timeout": 960000,
         "next": [
@@ -263,9 +263,10 @@
         "recognition": "Custom",
         "custom_recognition": "SkillReadyBright",
         "custom_recognition_param": {
-            "mode": "ratio",
-            "v_thresh": 160,
-            "threshold": 0.85,
+            "mode": "bc",
+            "v_thresh": 150,
+            "s_thresh": 70,
+            "threshold": 0.3,
             "confirm": 1
         },
         "roi": [
