@@ -248,6 +248,15 @@ class CombatFighter(CustomAction):
     ]
     _TPL_CACHE: dict[str, "cv2.Mat"] = {}
 
+    # skill_cycle 的键 → pipeline 里的节点名（就绪判定要用这些节点的 roi 与阈值）
+    _SKILL_NODE = {
+        "skill1": "Fight_Skill1",
+        "skill2": "Fight_Skill2",
+        "skill3": "Fight_Skill3",
+        "ult": "Fight_Ult",
+        "secret": "Fight_Secret",
+    }
+
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
         param = json.loads(argv.custom_action_param) if argv.custom_action_param else {}
 
@@ -260,9 +269,8 @@ class CombatFighter(CustomAction):
         skill_hold = int(st.get("hold_ms", 30))
         skill_gap = float(st.get("interval_ms", 30)) / 1000
         tap_cfg = param.get("normal_tap", {})
-        tap_hold = float(tap_cfg.get("hold_ms", 30)) / 1000
-        tap_gap = float(tap_cfg.get("interval_ms", 30)) / 1000
-        tap_times = max(1, int(tap_cfg.get("times", 3)))
+        tap_hold = float(tap_cfg.get("hold_ms", 40)) / 1000
+        tap_gap = float(tap_cfg.get("interval_ms", 150)) / 1000
         # 胜负结算检测（2026-10-22 定稿：只查失败）：失败结算画面盲点点不掉（确认键
         # 不在盲点坐标上），必须检测兜底 break 交给 Fight_Lose → Arena_SettleOk；
         # 胜利结算盲点自己会点掉回主界面（由主界面判定收口），不查 win——查询窗口期
@@ -270,6 +278,26 @@ class CombatFighter(CustomAction):
         result_nodes = list(param.get("result_nodes", ["Fight_Lose"]))
         keep_moving = bool(param.get("keep_moving", False))
         move_dir = param.get("move_dir", [-1, 0])
+
+        # ===== v1.2.20：出招节奏改造（P0 就绪轮询 / P1 普攻/轮 / P2 受击 / P3 KO 静默） =====
+        # 实测依据见 debug/plan_v1.2.20_combat.md：一轮 600ms 里 300ms 花在 5 个技能的盲点上，
+        # 而技能 CD 是 5~12s，约 93% 的点落在冷却里。
+        ready_only = bool(param.get("ready_only", True))
+        ready_miss_rounds = max(1, int(param.get("ready_miss_rounds", 4)))
+        normal_per_round = max(1, int(param.get("normal_per_round", 1)))
+        min_round = max(0.0, float(param.get("min_round_ms", 150)) / 1000.0)
+        hp_drop_px = max(1, int(param.get("hp_drop_px", 4)))
+        sub_burst_times = max(0, int(param.get("sub_burst_times", 2)))
+        sub_burst_cd = max(0.0, float(param.get("sub_burst_cd_s", 1.5)))
+        ko_quiet_max = max(1.0, float(param.get("ko_quiet_max_s", 12)))
+        # 就绪判定只在「读到了 pipeline 参数」时启用；读不到 → 退回原来的全量盲点
+        reco_cfg = _load_reco_cfg() if ready_only else {}
+        ready_miss = 0           # 连续「一个技能都没就绪」的轮数（兜底用）
+        hp_self_last = None      # 上一轮己方血条宽度（判掉血）
+        enemy_gone = 0           # 敌方血条连续「空/测不到」的次数
+        enemy_low = False        # 本轮是否见过敌方血条见底（KO 前置，防特效遮挡误判）
+        ko_quiet = True          # P3 静默开关（血条判据失灵一次就关掉，本局不再用）
+        sub_cd_until = 0.0       # 受击连点替身的冷却截止时刻
 
         ctrl = context.tasker.controller
         print(f"[CombatFighter] 开始（{duration:.0f}s 上限）", flush=True)
@@ -313,11 +341,16 @@ class CombatFighter(CustomAction):
             while time.time() < deadline:
                 if context.tasker.stopping:
                     break
+                round_t0 = time.time()
 
                 _shot(ctrl)
                 img = ctrl.cached_image
                 gray = None
+                hp_self = hp_enemy = None
                 if img is not None and getattr(img, "size", 0):
+                    # v1.2.20：血条宽度（P2 判自己挨打 / P3 判敌方 KO 换场）。
+                    # 只对顶部 26 行做 HSV，实测 0.3ms，不影响出招节奏。
+                    hp_self, hp_enemy = self._hp_widths(img, param)
                     gray = self._to_gray_1280(img)
                     # ===== v1.2.19 防误点：结算页 / 竞技场主页，每轮都判 =====
                     # 主防线：胜负结算页一出现就停手，「确定」交给流水线
@@ -364,6 +397,64 @@ class CombatFighter(CustomAction):
                         fp = -1.0
                     print(f"[CombatFighter] t={now - t0:.0f}s 画面均值={fp:.1f}", flush=True)
 
+                # ===== P3 敌方 KO / 换场：静默等下一回合（v1.2.20） =====
+                # 实测一局 97.6s 里有 15.7s 是「KO 定格 + WINNER + 黑屏」（16%），
+                # 这段时间点击全是空的，而且 WINNER 画面万一有按钮会被盲点砸中。
+                # 判据不用模板：敌方血条先降到 ≤8px（见底 ≤15px），之后连续 3 次测不到/仍见底
+                # 就是被打空了。「先见底」这个前置很关键 —— 否则大招特效糊住血条造成的
+                # 偶发测不到也会被当成 KO，白白静默。
+                # 「车轮战」规则下新回合敌方满血登场（实测 831→1164），血条回到 >20px
+                # 就恢复出招；静默上限 ko_quiet_max_s（实测最长换场 7.9s）。
+                if hp_enemy is not None and hp_enemy > 20:
+                    enemy_low = False
+                    enemy_gone = 0
+                elif enemy_low and (hp_enemy is None or hp_enemy <= 15):
+                    enemy_gone += 1
+                elif hp_enemy is not None and hp_enemy <= 15:
+                    enemy_low = True
+                    enemy_gone += 1
+                else:
+                    enemy_gone = 0
+                if ko_quiet and enemy_gone >= 3:
+                    print("[CombatFighter] 敌方血量见底（KO/换场），静默等下一回合", flush=True)
+                    res = self._quiet_wait(ctrl, context, param, ko_quiet_max, deadline)
+                    if res == "page":
+                        print("[CombatFighter] 静默期间出现结算/主城等页面，停手交给流水线",
+                              flush=True)
+                        break
+                    if res == "timeout":
+                        ko_quiet = False  # 判据失灵（如血条被长期遮挡）→ 本局关掉静默
+                    enemy_gone = 0
+                    enemy_low = False
+                    hp_self_last = None
+                    next_result_check = time.time() + result_interval
+                    continue
+
+                # ===== P2 自己挨打：连点替身脱身（v1.2.20） =====
+                # 实测 ROUND 2 的 95.7s 一次掉 34% 血、之后 5 秒敌方血量纹丝不动 ——
+                # 被连招压着打时，一轮只点一次替身经常错过发光窗口。
+                # 触发条件只看「己方血条在掉」，1.5s 冷却防连点成翻滚位移。
+                if (hp_self is not None and hp_self_last is not None
+                        and hp_self_last - hp_self >= hp_drop_px
+                        and sub_burst_times > 0 and time.time() >= sub_cd_until):
+                    sub_cd_until = time.time() + sub_burst_cd
+                    print(f"[CombatFighter] 己方掉血 {hp_self_last:.0f}→{hp_self:.0f}px，"
+                          f"连点替身×{sub_burst_times}", flush=True)
+                    for _ in range(sub_burst_times):
+                        if context.tasker.stopping or time.time() >= deadline:
+                            break
+                        _shot(ctrl)
+                        im2 = ctrl.cached_image
+                        if im2 is not None and getattr(im2, "size", 0):
+                            node = self._first_hit(im2, recog_nodes, context)
+                            if node:
+                                k = self._key_of(node)
+                                if k:
+                                    _tap(ctrl, k, hold_ms=skill_hold)
+                        time.sleep(0.06)
+                if hp_self is not None:
+                    hp_self_last = hp_self
+
                 # 误点界面识别（降频）：到达检查时刻才跑。
                 # ① 命中误点界面 => 循环执行退出（嵌套逐层退），直到回主界面才收手 break；
                 # ② 无误点且非主界面 => 检查胜负结算文字（失败结算盲点点不掉，必须兜底）；
@@ -390,19 +481,51 @@ class CombatFighter(CustomAction):
                         if key:
                             _tap(ctrl, key, hold_ms=skill_hold)
 
-                for key in skill_cycle:
+                # ===== P0 技能就绪轮询（v1.2.20） =====
+                # 原来每轮无条件把 5 个技能各点一次：CD 是 5~12s，一轮 600ms，
+                # 约 93% 的点击落在冷却里，白耗 280ms/轮。
+                # 现在改成本地判就绪只点就绪的（5 个合计 0.41ms），省下的时间
+                # 直接进下一轮 → 技能 CD 好了最多 150ms 就被点上（原来最多 600ms）。
+                # 兜底：连续 ready_miss_rounds 轮一个都没就绪 → 直接退回「全量盲点」
+                # 并一直保持到本局结束。理由是「只盲点一轮」在阈值整体失效时反而
+                # 更差（技能频率从 1.7 次/s 掉到 0.3 次/s）；退回旧行为至少不倒退。
+                cycle = skill_cycle
+                if reco_cfg and img is not None and getattr(img, "size", 0):
+                    ready = self._ready_keys(img, reco_cfg)
+                    hit = [k for k in skill_cycle if k in ready]
+                    if hit:
+                        cycle = hit
+                        ready_miss = 0
+                    else:
+                        ready_miss += 1
+                        if ready_miss >= ready_miss_rounds:
+                            reco_cfg = {}
+                            ready_miss = 0
+                            print(f"[CombatFighter] 连续 {ready_miss_rounds} 轮无技能就绪，"
+                                  "就绪阈值可能失效 → 本局退回全量盲点", flush=True)
+                        else:
+                            cycle = []   # 全在 CD：这轮不点技能，把时间让给普攻
+
+                for key in cycle:
                     if context.tasker.stopping:
                         break
                     if key in BUTTONS:
                         _tap(ctrl, key, hold_ms=skill_hold)
                         time.sleep(skill_gap)
 
-                for _ in range(tap_times):
+                # P1：每轮只点 normal_per_round 次普攻，节奏交给轮次周期（min_round_ms）。
+                # 原来 30ms 间隔连点 3 次、90ms 内打完，实测只出第 1 段。
+                for _ in range(normal_per_round):
                     if context.tasker.stopping:
                         break
                     _tap(ctrl, "normal", hold_ms=int(tap_hold * 1000))
-                    time.sleep(tap_gap)
+                    if normal_per_round > 1:
+                        time.sleep(tap_gap)
 
+                # 轮次最短周期：保证普攻有连招窗口，又不把技能响应拖慢
+                used = time.time() - round_t0
+                if min_round > used:
+                    time.sleep(min_round - used)
                 if interval > 0:
                     time.sleep(interval)
         finally:
@@ -561,6 +684,117 @@ class CombatFighter(CustomAction):
         th = float(param.get("rank_up_threshold", 0.8))
         roi = tuple(int(v) for v in param.get("rank_up_roi", [300, 60, 720, 130]))
         return cls._match_score(gray, tpl, roi) >= th
+
+    @classmethod
+    def _ready_keys(cls, img, cfg) -> set:
+        """本轮「技能已就绪」的键集合（img 为 BGR cached_image，cfg 来自 combat.json）。
+
+        阈值口径：v1.2.20 实测发现原来那组阈值普遍偏紧（skill1 冷却中固定落在
+        0.677，阈值 0.5 会误判；skill2 就绪只有 0.52，阈值 0.5 贴着边）。
+        详见 debug/_probe_skill_ready.py 的标定表与 debug/_probe_btn_grid.png。
+
+        冷却中的按钮中央有白色秒数、底色是暗紫（skill1 实测 0.07）；
+        就绪态是整颗亮紫图标（0.68）。所以「亮像素占比」能分开，只是阈值要放对。
+        """
+        out: set = set()
+        for key, node in cls._SKILL_NODE.items():
+            c = cfg.get(node)
+            if c is None:
+                continue
+            try:
+                if cls._ready_hit(img, c):
+                    out.add(key)
+            except Exception:
+                continue
+        return out
+
+    @classmethod
+    def _hp_widths(cls, img, param):
+        """战斗中双方血条宽度（px，1280 基准），测不到返回 None。
+
+        血条是唯一「打没打中 / 有没挨打」的直接反馈，且不需要新模板。
+        实测（debug/_vid4 逐秒 150 帧，敌方右对齐 / 己方左对齐，满血各 333px，
+        精度 ±1px）：敌方 831→1164 单调收缩，己方 115→448 单调收缩。
+
+        只切顶部 26 行做 HSV（整图 HSV 要 3ms，这样 0.3ms），所以逐轮跑得起。
+        阈值写死黄绿区间（35~75），因为血条是黄绿色、背景 HUD 是深蓝黑、
+        能量条是橙色（H≈15~25）、延迟文字是低饱和白 —— 三者都不在区间内。
+        """
+        roi = param.get("hp_roi", [18, 44, 80, 1210])
+        self_lo, self_hi = param.get("hp_self_x", [115, 448])
+        ene_lo, ene_hi = param.get("hp_enemy_x", [831, 1164])
+        if img is None or not getattr(img, "size", 0):
+            return None, None
+        if img.ndim == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        H, W = img.shape[:2]
+        sc = W / 1280.0
+        y0, y1 = int(roi[0] * sc), int(roi[1] * sc)
+        band = img[max(0, y0):min(H, y1), :]
+        if band.size == 0 or band.shape[0] < 4:
+            return None, None
+        if band.shape[1] != 1280:
+            band = cv2.resize(band, (1280, band.shape[0]), interpolation=cv2.INTER_AREA)
+        hsv = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, np.array((35, 120, 120), np.uint8),
+                           np.array((75, 255, 255), np.uint8)) > 0
+        col = mask.mean(axis=0) > 0.45
+
+        def edge(x0: int, x1: int, pick_right: bool):
+            x0 = max(0, int(x0))
+            x1 = min(1280, int(x1))
+            seg = np.where(col[x0:x1])[0]
+            if len(seg) == 0:
+                return None
+            return int(x0 + (seg.max() if pick_right else seg.min()))
+
+        right = edge(self_lo, self_hi + 40, True)     # 己方：最右端
+        left = edge(ene_lo - 40, ene_hi, False)       # 敌方：最左端
+        hp_self = (right - self_lo) if right is not None else None
+        hp_enemy = (ene_hi - left) if left is not None else None
+        return hp_self, hp_enemy
+
+    def _quiet_wait(self, ctrl, context, param, max_s: float, deadline=None) -> str:
+        """P3 静默期：一方 KO / 换场时只观察不点击，等新回合。
+
+        返回值：
+          "round"   → 新回合开始（敌方血条回到 >20px），恢复出招
+          "page"    → 静默期间出现了该停手的页面（结算页/竞技场主页/大师团/主城/
+                      段位弹窗），调用方应当 break 交给流水线
+          "timeout" → 超时（调用方据此关闭本局静默，避免血条判据失灵时整局卡住）
+
+        「最后一回合 KO」是必须在这里认页面的原因：KO 之后 10s 左右才进结算页
+        （录像 133.5 KO → 143.7 结算），如果只盯血条会一路等到 12s 超时，
+        正好把 v1.2.19 那条 2.33s 的结算页防误点窗口整段错过。
+        """
+        t_end = time.time() + max_s
+        while time.time() < t_end:
+            if context.tasker.stopping:
+                return "timeout"
+            if deadline is not None and time.time() >= deadline:
+                return "timeout"
+            time.sleep(0.4)
+            _shot(ctrl)
+            img = ctrl.cached_image
+            if img is None or not getattr(img, "size", 0):
+                continue
+            hs, he = self._hp_widths(img, param)
+            # 新回合：敌方满血登场（实测 333px），己方血条同时可见
+            if he is not None and he > 20 and hs is not None:
+                print(f"[CombatFighter] 新回合开始（敌方血量 {he:.0f}px），恢复出招",
+                      flush=True)
+                return "round"
+            try:
+                gray = self._to_gray_1280(img)
+            except Exception:
+                continue
+            if (self._settle_hit(gray, param) or self._arena_page_hit(gray, param)
+                    or self._team_page_hit(gray, param)
+                    or self._rank_up_hit(gray, param)
+                    or self._home_page_hit(gray, param)):
+                return "page"
+        print(f"[CombatFighter] KO 静默超时 {max_s:.0f}s，恢复出招（防卡死）", flush=True)
+        return "timeout"
 
     @classmethod
     def _settle_hit(cls, gray, param) -> bool:

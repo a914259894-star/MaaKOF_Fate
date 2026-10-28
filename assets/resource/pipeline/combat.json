@@ -21,9 +21,9 @@
                 "interval_ms": 30
             },
             "normal_tap": {
-                "hold_ms": 30,
-                "interval_ms": 30,
-                "times": 3
+                "hold_ms": 40,
+                "interval_ms": 150,
+                "times": 1
             },
             "keep_moving": false,
             "move_dir": [
@@ -87,7 +87,29 @@
                 14,
                 1104,
                 38
-            ]
+            ],
+            "ready_only": true,
+            "ready_miss_rounds": 4,
+            "normal_per_round": 1,
+            "min_round_ms": 150,
+            "hp_roi": [
+                18,
+                44,
+                80,
+                1210
+            ],
+            "hp_self_x": [
+                115,
+                448
+            ],
+            "hp_enemy_x": [
+                831,
+                1164
+            ],
+            "hp_drop_px": 4,
+            "sub_burst_times": 2,
+            "sub_burst_cd_s": 1.5,
+            "ko_quiet_max_s": 12
         },
         "timeout": 960000,
         "next": [
@@ -147,7 +169,7 @@
         "custom_recognition_param": {
             "mode": "ratio",
             "v_thresh": 160,
-            "threshold": 0.45,
+            "threshold": 0.6,
             "confirm": 1
         },
         "roi": [
@@ -171,7 +193,7 @@
         "custom_recognition_param": {
             "mode": "ratio",
             "v_thresh": 160,
-            "threshold": 0.5,
+            "threshold": 0.45,
             "confirm": 1
         },
         "roi": [
@@ -195,7 +217,7 @@
         "custom_recognition_param": {
             "mode": "ratio",
             "v_thresh": 160,
-            "threshold": 0.5,
+            "threshold": 0.35,
             "confirm": 1
         },
         "roi": [
@@ -219,7 +241,7 @@
         "custom_recognition_param": {
             "channel": "s",
             "mode": "median",
-            "threshold": 150,
+            "threshold": 95,
             "confirm": 1
         },
         "roi": [
@@ -243,7 +265,7 @@
         "custom_recognition_param": {
             "mode": "ratio",
             "v_thresh": 160,
-            "threshold": 0.65,
+            "threshold": 0.85,
             "confirm": 1
         },
         "roi": [
