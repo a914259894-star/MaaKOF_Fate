@@ -309,6 +309,12 @@ class CombatFighter(CustomAction):
         # （根本不是满血 333px 的新回合）。真 KO 那次血条消失 6.2~14.6s。
         ko_gone_s = max(1.0, float(param.get("ko_gone_s", 2.0)))
         ko_low_px = max(1, int(param.get("ko_low_px", 12)))
+        # v1.2.23：KO 静默改为**默认关闭**（ko_quiet_enable=false）。
+        # 它只是省掉换场空点击的优化，不是正确性必需品：真正需要停手的地方
+        # （结算页 / 竞技场页 / 大师团页 / 主城 / 段位弹窗）每轮都在判，与静默无关。
+        # 而血条判据再稳也有误判代价（敌人残血被特效盖住 → 停手不补刀），
+        # 用户实机更在意「别停」。想换回 v1.2.20 的行为把 ko_quiet_enable 改 true。
+        ko_quiet = bool(param.get("ko_quiet_enable", False))
         # 就绪判定只在「读到了 pipeline 参数」时启用；读不到 → 退回原来的全量盲点
         reco_cfg = _load_reco_cfg() if ready_only else {}
         ready_miss_t0 = 0.0      # 「一个技能都没就绪」这段连续时间的起点（0 = 没在计时）
@@ -316,7 +322,6 @@ class CombatFighter(CustomAction):
         enemy_gone_t0 = None     # 敌方血条「测不到」这段连续时间的起点（None = 没在计时）
         enemy_low = False        # 是否见过敌方血条真的快空（≤ko_low_px，KO 前置）
         enemy_min_px = None      # 本回合见过的最小敌方血条宽度（诊断日志用）
-        ko_quiet = True          # P3 静默开关（血条判据失灵一次就关掉，本局不再用）
         sub_cd_until = 0.0       # 受击连点替身的冷却截止时刻
 
         ctrl = context.tasker.controller
