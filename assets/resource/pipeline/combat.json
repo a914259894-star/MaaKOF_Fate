@@ -170,9 +170,10 @@
         "recognition": "Custom",
         "custom_recognition": "SkillReadyBright",
         "custom_recognition_param": {
-            "mode": "ratio",
-            "v_thresh": 160,
-            "threshold": 0.6,
+            "mode": "bc",
+            "v_thresh": 150,
+            "s_thresh": 70,
+            "threshold": 0.15,
             "confirm": 1
         },
         "roi": [
@@ -194,9 +195,10 @@
         "recognition": "Custom",
         "custom_recognition": "SkillReadyBright",
         "custom_recognition_param": {
-            "mode": "ratio",
-            "v_thresh": 160,
-            "threshold": 0.45,
+            "mode": "bc",
+            "v_thresh": 150,
+            "s_thresh": 70,
+            "threshold": 0.15,
             "confirm": 1
         },
         "roi": [
@@ -218,9 +220,10 @@
         "recognition": "Custom",
         "custom_recognition": "SkillReadyBright",
         "custom_recognition_param": {
-            "mode": "ratio",
-            "v_thresh": 160,
-            "threshold": 0.35,
+            "mode": "bc",
+            "v_thresh": 150,
+            "s_thresh": 70,
+            "threshold": 0.15,
             "confirm": 1
         },
         "roi": [
@@ -242,9 +245,10 @@
         "recognition": "Custom",
         "custom_recognition": "SkillReadyBright",
         "custom_recognition_param": {
-            "channel": "s",
-            "mode": "median",
-            "threshold": 95,
+            "mode": "bc",
+            "v_thresh": 150,
+            "s_thresh": 70,
+            "threshold": 0.15,
             "confirm": 1
         },
         "roi": [
