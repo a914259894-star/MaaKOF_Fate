@@ -81,7 +81,7 @@
                 240,
                 90
             ],
-            "battle_threshold": 0.8,
+            "battle_threshold": 0.65,
             "battle_roi": [
                 88,
                 14,

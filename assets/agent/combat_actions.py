@@ -220,7 +220,7 @@ class CombatFighter(CustomAction):
         "settle_roi": [410, 70, 430, 130],  // 结算页顶部文字（胜利/失败各一张）
         "arena_threshold": 0.85,       // 竞技场主页 arena_title 阈值
         "arena_roi": [0, 0, 240, 90],  // 左上角标题（ROI 化比全屏快 60 倍）
-        "battle_threshold": 0.8,       // 战斗 HUD 血条段阈值（battle_hp1/2）
+        "battle_threshold": 0.65,      // 战斗 HUD 血条段阈值（battle_hp1/2）
         "battle_roi": [88, 14, 1104, 38]    // 两条血条所在横带
     }
 
@@ -945,7 +945,7 @@ class CombatFighter(CustomAction):
         覆盖范围：1P 或 2P 任意一侧还剩一整段血（约 HP≥25%）即命中；两侧同时见底
         才漏判 —— 此时本来也快分出胜负了，漏判只会让调用方多等一轮。
         """
-        th = float(param.get("battle_threshold", 0.8))
+        th = float(param.get("battle_threshold", 0.65))
         roi = tuple(int(v) for v in param.get("battle_roi", [88, 14, 1104, 38]))
         for rel in ("battle_hp1", "battle_hp2"):
             tpl = cls._load_tpl(rel)

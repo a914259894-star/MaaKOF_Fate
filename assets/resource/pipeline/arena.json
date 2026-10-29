@@ -232,7 +232,7 @@
             38
         ],
         "green_mask": false,
-        "threshold": 0.8,
+        "threshold": 0.65,
         "action": "DoNothing",
         "rate_limit": 1000,
         "timeout": 90000,
