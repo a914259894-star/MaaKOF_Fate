@@ -12,6 +12,8 @@ except ModuleNotFoundError as e:
         "Or add it to your project's requirements."
     ) from e
 
+from config_seed import apply_config_prefs
+
 
 working_dir = Path(__file__).parent.parent.resolve()
 install_path = working_dir / Path("install")
@@ -201,5 +203,9 @@ if __name__ == "__main__":
     install_agent()
     install_config()
     install_agent_runtime()
+
+    # 预置 GUI 偏好：关闭实时画面 + 独立截图执行器（见 tools/config_seed.py）
+    config_path = apply_config_prefs(install_path)
+    print(f"[install] GUI 偏好已写入 {config_path}（实时画面默认关闭）")
 
     print(f"Install to {install_path} successfully.")
