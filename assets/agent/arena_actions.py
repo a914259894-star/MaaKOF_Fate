@@ -78,7 +78,14 @@ class ArenaPick(CustomAction):
         "swipe": {"from": [829, 230], "to": [300, 230], "ms": 350, "settle_ms": 250},
         // 翻页再提速：单次拖拽更长(529px)、更快(350ms)、间隔更短(250ms)；
         // 拖到末页用 stuck 检测收敛到最少次数，与选人倒计时拉开更大余量。
-        "confirm": [622, 638],
+        "confirm": [622, 638],           // 「确定」按钮的兜底坐标（正常走模板定位）
+        // —— 点确定（v1.2.28 起等按钮出现再点，不再盲点）——
+        // 按钮要选满 3 人才淡入；以前 0.4s 后盲点固定坐标必然点空且不报错，
+        // 结果每局白等游戏倒计时自动开打（现场日志 30~90 秒/局）。
+        "confirm_wait": 6,               // 等「确定」按钮出现的上限秒数
+        "confirm_clicks": 3,             // 最多点几次（点了没走 = 被动画吞，补点）
+        "confirm_settle_s": 1.0,         // 每次点击后等多久再复核
+        "confirm_threshold": 0.8,        // pick_confirm.png 匹配阈值
         // —— 勾判定参数 ——
         "check_half": 60,        // 勾搜索半径：以被点格子中心为圆心取 (2*half)^2 窗口（格子约 105px）
         "check_threshold": 0.7,  // 勾模板匹配阈值（实测真勾 0.98/0.89、无勾 0.0）
@@ -126,9 +133,115 @@ class ArenaPick(CustomAction):
             # 极端情况：选人逻辑走完但期间游戏已自动锁定跳页，确定键不能再点
             print("[ArenaPick] 确定前检测到「确定出手顺序」页（游戏已自动锁定），跳过点确定", flush=True)
             return True
-        time.sleep(0.4)
-        ctrl.post_click(*confirm_xy)  # 发完就走，不等回执（慢环境防阻塞）
+        self._confirm(ctrl, param, confirm_xy)
         return True
+
+    # ---------------- 点确定 ----------------
+    def _pick_page_present(self, gray, param) -> bool:
+        """当前帧是否还在选人页（以 1P 标签 / 近期使用页签为准）。"""
+        if gray is None:
+            return True  # 没图不敢说走了，按还在处理
+        th = float(param.get("pick_page_threshold", 0.8))
+        for name in ("pick_wait", "pick_recent"):
+            tpl = self._load_rel(name)
+            if tpl is None:
+                continue
+            if gray.shape[0] < tpl.shape[0] or gray.shape[1] < tpl.shape[1]:
+                continue
+            score = float(cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED).max())
+            if score >= th:
+                return True
+        return False
+
+    @classmethod
+    def _find_confirm(cls, gray, param):
+        """全屏找「确定」按钮，命中返回 (cx, cy, score)，否则 None。
+
+        以前这里是盲点固定坐标 (622,638)：按钮要等选满 3 人才淡入，0.4s 后
+        盲点必然点在空处，而且点空了不会报错 —— 于是每局白等游戏倒计时
+        自动开打（现场日志 30~90 秒/局）。pick_confirm.png 就是这颗红按钮
+        （116x43），等它出现再按它的实际位置点。
+        """
+        tpl = cls._load_rel("pick_confirm")
+        if tpl is None or gray is None:
+            return None
+        H, W = gray.shape[:2]
+        if H < tpl.shape[0] or W < tpl.shape[1]:
+            return None
+        th = float(param.get("confirm_threshold", 0.8))
+        score = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
+        _, mx, _, loc = cv2.minMaxLoc(score)
+        if float(mx) < th:
+            return None
+        return (loc[0] + tpl.shape[1] // 2, loc[1] + tpl.shape[0] // 2, float(mx))
+
+    def _confirm(self, ctrl, param, fallback) -> bool:
+        """等「确定」按钮出现 → 点它 → 验证已离开选人页；没走掉就补点。"""
+        wait_s = float(param.get("confirm_wait", 6.0))
+        settle = float(param.get("confirm_settle_s", 1.0))
+        max_clicks = max(1, int(param.get("confirm_clicks", 3)))
+        clicks = 0
+        absent = 0          # 连续几轮看不到选人页锚点
+        last_miss = None
+        deadline = time.time() + wait_s
+        while time.time() < deadline:
+            gray = self._grab_1280(ctrl)
+            if gray is None:
+                time.sleep(0.35)
+                continue
+            if self._pick_page_present(gray, param):
+                absent = 0
+            else:
+                absent += 1
+                # 点过之后页面消失 = 确定生效；没点过就连着两轮看不到锚点，
+                # 说明已经被游戏接管（顺序页/战斗），绝不能再往画面上盲点。
+                if clicks > 0 or absent >= 2:
+                    print("[ArenaPick] [OK] 已离开选人页（确定生效/游戏接管），不再点", flush=True)
+                    return True
+                time.sleep(0.35)
+                continue
+            hit = self._find_confirm(gray, param)
+            if hit is None:
+                time.sleep(0.35)
+                continue
+            cx, cy, sc = hit
+            if clicks >= max_clicks:
+                break
+            clicks += 1
+            print(f"[ArenaPick] 点「确定」({cx},{cy}) score={sc:.3f}（第 {clicks}/{max_clicks} 次）",
+                  flush=True)
+            ctrl.post_click(int(cx), int(cy))
+            time.sleep(settle)
+            last_miss = (cx, cy, sc)
+
+        # 兜底：一直在选人页但模板始终没命中（旧按钮样式/被特效遮挡）才退回盲点
+        if clicks == 0:
+            try:
+                bx, by = int(fallback[0]), int(fallback[1])
+            except (TypeError, IndexError, ValueError):
+                bx, by = 622, 638
+            print(f"[ArenaPick] [!] {wait_s:.0f}s 内没认出「确定」按钮，退回盲点 ({bx},{by})",
+                  flush=True)
+            ctrl.post_click(bx, by)
+            time.sleep(settle)
+        print(f"[ArenaPick] [!] 点了 {clicks} 次确定仍停在选人页"
+              f"（{last_miss}），交给游戏倒计时自动锁定", flush=True)
+        self._dump_confirm_miss(ctrl)
+        return False
+
+    def _dump_confirm_miss(self, ctrl):
+        """把「点了确定却没走」的那一帧存下来，排查按钮到底长什么样/在哪。"""
+        try:
+            bgr = self._grab_bgr(ctrl)
+            if bgr is None:
+                return
+            d = os.path.join(os.getcwd(), "debug")
+            os.makedirs(d, exist_ok=True)
+            p = os.path.join(d, time.strftime("confirm_miss_%Y%m%d-%H%M%S.png"))
+            cv2.imwrite(p, bgr)
+            print(f"[ArenaPick] 已存现场图 {p}", flush=True)
+        except (OSError, cv2.error) as e:
+            print(f"[ArenaPick] 存现场图失败（不影响流程）: {e}", flush=True)
 
     @classmethod
     def _order_screen(cls, ctrl, param) -> bool:
