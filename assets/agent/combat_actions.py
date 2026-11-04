@@ -354,6 +354,11 @@ class CombatFighter(CustomAction):
         t0 = time.time()
         last_report = 0.0
         joy_down = False
+        # v1.2.29：每个技能「本局第一次真的按下去」打一行日志。
+        # 就绪判据是按角色图标标定的，换角色后偏了会静默整局不点（v1.2.24 的
+        # 一技能、v1.2.29 的三技能都是这样）。有这 5 行就能直接对上「屏幕上
+        # 亮的技能到底有没有被点」，不用再靠猜。
+        pressed_once: set = set()
         # 未知界面兜底状态（2026-10-23 v1.2.2）：装备页等未收录界面识别不到时，
         # 靠「画面长时间纹丝不动」判定卡死，点右上返回自救。
         stall = {"sig": None, "cnt": 0, "fired": 0}
@@ -543,6 +548,10 @@ class CombatFighter(CustomAction):
                         break
                     if key in BUTTONS:
                         _tap(ctrl, key, hold_ms=skill_hold)
+                        if key not in pressed_once:
+                            pressed_once.add(key)
+                            print(f"[CombatFighter] 本局首次出招 {key}（就绪判据已认到它）",
+                                  flush=True)
                         time.sleep(skill_gap)
 
                 # P1：每轮只点 normal_per_round 次普攻，节奏交给轮次周期（min_round_ms）。
@@ -728,6 +737,18 @@ class CombatFighter(CustomAction):
 
         冷却中的按钮中央有白色秒数、底色是暗紫（skill1 实测 0.07）；
         就绪态是整颗亮紫图标（0.68）。所以「亮像素占比」能分开，只是阈值要放对。
+
+        v1.2.29 再次收口（三技能整局不点的现场）：
+        判据是 v1.2.24 按「图标整颗都亮」的角色标的（V>=150 & S>=70 / 0.15）。
+        换到图标本身偏暗的角色（蓝色立绘、亮部只有 110~140）后，整局贴边：
+        同一个按钮平移 5px，指标就能从 0.22 掉到 0.04 —— 于是永远差一点不点。
+        改法两条，缺一不可：
+        ① 亮度门槛 150→110、饱和度 70→55（白字 S≈0 仍然被挡在外面，
+           所以冷却态的白色秒数不会再把指标顶高）；
+        ② roi 从 27~35px 放到 42x42，把整个图标纳入统计 ——
+           实测 ±6px 对齐误差下，指标从 0.14~0.59 收窄到 0.40~0.60。
+        标定（157 帧录像）：四技能就绪组最低 0.45 / 冷却组中位 0.00~0.02，
+        th=0.30 无漏判；用户现场帧三技能 0.40~0.60、其余三个 0.00~0.03。
         """
         out: set = set()
         for key, node in cls._SKILL_NODE.items():

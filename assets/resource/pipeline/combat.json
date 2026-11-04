@@ -171,16 +171,16 @@
         "custom_recognition": "SkillReadyBright",
         "custom_recognition_param": {
             "mode": "bc",
-            "v_thresh": 150,
-            "s_thresh": 70,
-            "threshold": 0.15,
+            "v_thresh": 110,
+            "s_thresh": 55,
+            "threshold": 0.3,
             "confirm": 1
         },
         "roi": [
-            1198,
-            310,
-            28,
-            31
+            1191,
+            304,
+            42,
+            42
         ],
         "action": "Click",
         "pre_delay": 0,
@@ -196,16 +196,16 @@
         "custom_recognition": "SkillReadyBright",
         "custom_recognition_param": {
             "mode": "bc",
-            "v_thresh": 150,
-            "s_thresh": 70,
-            "threshold": 0.15,
+            "v_thresh": 110,
+            "s_thresh": 55,
+            "threshold": 0.3,
             "confirm": 1
         },
         "roi": [
-            964,
-            626,
-            35,
-            34
+            960,
+            622,
+            42,
+            42
         ],
         "action": "Click",
         "pre_delay": 0,
@@ -221,16 +221,16 @@
         "custom_recognition": "SkillReadyBright",
         "custom_recognition_param": {
             "mode": "bc",
-            "v_thresh": 150,
-            "s_thresh": 70,
-            "threshold": 0.15,
+            "v_thresh": 110,
+            "s_thresh": 55,
+            "threshold": 0.3,
             "confirm": 1
         },
         "roi": [
-            1030,
-            495,
-            30,
-            33
+            1024,
+            490,
+            42,
+            42
         ],
         "action": "Click",
         "pre_delay": 0,
@@ -246,16 +246,16 @@
         "custom_recognition": "SkillReadyBright",
         "custom_recognition_param": {
             "mode": "bc",
-            "v_thresh": 150,
-            "s_thresh": 70,
-            "threshold": 0.15,
+            "v_thresh": 110,
+            "s_thresh": 55,
+            "threshold": 0.3,
             "confirm": 1
         },
         "roi": [
-            1155,
-            433,
-            27,
-            29
+            1147,
+            426,
+            42,
+            42
         ],
         "action": "Click",
         "pre_delay": 0,
