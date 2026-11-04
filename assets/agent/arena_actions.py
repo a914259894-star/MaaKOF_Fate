@@ -86,6 +86,14 @@ class ArenaPick(CustomAction):
         "click_max_tries": 3,    // 单个角色最多点击次数（勾一直不出现时）
         "miss_confirm": 2,       // 连续 N 次检测无勾才认定未选上并补点（防检测抖动把已选角色 toggle 掉）
         "check_timeout": 5,      // 每次点击后等待勾出现的秒数
+        // —— 快速选人（quick_pick=true）的勾校验 ——
+        // 点完立刻判勾会误判：勾要 0.3~0.5s 才渲染出来，判早了就补点，
+        // 把刚选上的角色又 toggle 掉（v1.2.27 修的「第三个被点掉」）。
+        "quick_settle_s": 1.5,   // 三人点完后先等这么久再开始判勾
+        "verify_timeout": 8,     // 校验总时长上限，到点直接去点确定
+        "quick_miss_confirm": 2, // 同一格连续 N 次都测不到勾才补点
+        "quick_max_retry": 1,    // 每格最多补几次（判据整体失灵时防止无限连点）
+        "quick_retry_gap": 0.6,  // 校验轮询间隔秒
         // —— 找不到角色 / 兜底 ——
         "find_retries": 3,       // 模板未命中时重试截图次数（转场/截图抖动容错）
         "find_retry_gap": 0.8,   // 重试间隔秒
@@ -155,28 +163,83 @@ class ArenaPick(CustomAction):
         if len(targets) != 3:
             print("[ArenaPick] quick_targets 必须是 3 个 [x,y]", flush=True)
             return False
+
+        settle = float(param.get("quick_settle_s", 1.5))
+        timeout = float(param.get("verify_timeout", 8))
+        need = max(1, int(param.get("quick_miss_confirm", 2)))
+        max_retry = max(0, int(param.get("quick_max_retry", 1)))
+        gap = float(param.get("quick_retry_gap", 0.6))
+        th = float(param.get("check_threshold", 0.7))
+        tpl = self._load_rel("slots/slot_checked")
+
         print("[ArenaPick] 快速选人：点近期使用最左一列 3 人（上→下）", flush=True)
         # 慢环境优化：agent↔宿主图像传输可能降级（空图/单次数十秒），
-        # 点击一律"发完就走"不等回执；先三人各点 1 次，再限时验证补漏。
+        # 点击一律"发完就走"不等回执；先三人各点 1 次，再限时校验补漏。
         for x, y in targets:
             ctrl.post_click(int(x), int(y))
-            time.sleep(0.35)
-        # 验证窗口上限：到点直接返回去点确认（游戏选人倒计时也会自动确认）
-        deadline = time.time() + float(param.get("verify_timeout", 12))
-        while time.time() < deadline:
-            # 一个勾 = 一个角色选上：验证每个目标格是否有勾
-            flags = [self._cell_has_check(ctrl, x, y, param) for x, y in targets]
+            time.sleep(0.4)
+
+        if tpl is None:
+            print("[ArenaPick] [!] 缺少 slots/slot_checked.png，跳过勾校验（只点不补）", flush=True)
+            time.sleep(settle)
+            return True
+
+        # 宽限期：勾是点下去 0.3~0.5s 后才渲染完的。点完立刻截图会判成「无勾」，
+        # 于是补点，把刚选上的角色又 toggle 掉 —— 2026-11-04 10:26 的
+        # 「第三个被点掉」正是这个时序（44.912 补点 94,315，而 45.885 它本来有勾）。
+        time.sleep(settle)
+
+        miss = [0, 0, 0]
+        used = [0, 0, 0]
+        last_flags = None
+        blank_warned = False
+        deadline = time.time() + timeout
+        while True:
+            gray = self._grab_1280(ctrl)
+            if gray is None:
+                # 截图失败时判不了勾，绝不能拿它当「没选上」去补点
+                if not blank_warned:
+                    print("[ArenaPick] 截图为空（图像通道降级），本轮跳过勾判定", flush=True)
+                    blank_warned = True
+                if time.time() >= deadline:
+                    break
+                time.sleep(gap)
+                continue
+            scores = [self._cell_check_score(gray, tpl, x, y, param) for x, y in targets]
+            flags = [s is not None and s >= th for s in scores]
+            last_flags = flags
             if all(flags):
                 print(f"[ArenaPick] [OK] 快速选人 3 格全部有勾 {flags}", flush=True)
                 return True
-            # 只对无勾的格子补点；有勾的绝不再点（否则 toggle 掉）
-            for (x, y), ok in zip(targets, flags):
-                if not ok:
-                    print(f"[ArenaPick] 补点 左列 ({x},{y})（当前勾 {flags}）", flush=True)
+            if time.time() >= deadline:
+                break
+            clicked = False
+            for i, ((x, y), ok) in enumerate(zip(targets, flags)):
+                if ok:
+                    miss[i] = 0
+                    continue
+                if scores[i] is None:
+                    continue  # 窗口越界，判不了就不点
+                miss[i] += 1
+                # 防 toggle：同一格要连续 need 次都测不到勾才补，且总补点次数封顶。
+                # 判据整体失灵时（三格恒为 False）最多补 3 次就收手，不会像旧版
+                # 那样每 0.35s 把三格各点一遍、来回取消十几次。
+                if miss[i] >= need and used[i] < max_retry:
+                    used[i] += 1
+                    miss[i] = 0
+                    print(f"[ArenaPick] 补点 左列 ({x},{y})：连续 {need} 次无勾"
+                          f"（分数 {scores[i]:.2f} < {th}，已补 {used[i]}/{max_retry}）", flush=True)
                     ctrl.post_click(int(x), int(y))
-                    time.sleep(0.35)
-            time.sleep(0.5)
-        print("[ArenaPick] 选人结束（限时到），照常点确认；若当前不是「近期使用」快速选人页，"
+                    clicked = True
+            if clicked:
+                time.sleep(0.4 + gap)
+            else:
+                time.sleep(gap)
+
+        state = ("截图一直失败，无法判定" if last_flags is None
+                 else f"未凑齐 3 勾 {last_flags}，补点预算用完或超时")
+        print(f"[ArenaPick] 校验结束（{state}），"
+              "照常点确认；若当前不是「近期使用」快速选人页，"
               "请把 UI 选项「快速选人」设为关闭走模板选人", flush=True)
         return True
 
@@ -399,6 +462,30 @@ class ArenaPick(CustomAction):
             time.sleep(retry_gap)
         return None
 
+    @staticmethod
+    def _cell_check_score(gray, tpl, cx, cy, param):
+        """在已抓好的整屏灰度图上，测 (cx,cy) 附近格子的选中勾匹配分数。
+
+        返回最高分；窗口越界或截图/模板缺失（判不了）返回 None。
+        单独抽出来是为了「一次截图判 3 格」：每格各截一次不但慢，
+        3 张图还是不同时刻的，页面一动就容易自相矛盾。
+        """
+        if gray is None or tpl is None:
+            return None
+        H, W = gray.shape[:2]
+        half = int(param.get("check_half", 60))
+        bright = int(param.get("check_bright", 190))
+        x0, x1 = max(0, int(cx) - half), min(W, int(cx) + half)
+        y0, y1 = max(0, int(cy) - half), min(H, int(cy) + half)
+        patch = gray[y0:y1, x0:x1]
+        if patch.shape[0] < tpl.shape[0] or patch.shape[1] < tpl.shape[1]:
+            return None  # 窗口越界无法验证
+        _, bw = cv2.threshold(patch, bright, 255, cv2.THRESH_BINARY)
+        if not bw.any():
+            return 0.0  # 全黑（无勾）
+        score = cv2.matchTemplate(bw, tpl, cv2.TM_CCOEFF_NORMED)
+        return float(score.max())
+
     @classmethod
     def _cell_has_check(cls, ctrl, cx, cy, param) -> bool:
         """判定 (cx,cy) 附近的格子是否出现选中勾。
@@ -417,21 +504,10 @@ class ArenaPick(CustomAction):
         if gray is None:
             print("[ArenaPick] 截图为空（图像通道降级），按无勾处理", flush=True)
             return False
-        H, W = gray.shape[:2]
-        half = int(param.get("check_half", 60))
-        bright = int(param.get("check_bright", 190))
-        th = float(param.get("check_threshold", 0.7))
-        x0, x1 = max(0, int(cx) - half), min(W, int(cx) + half)
-        y0, y1 = max(0, int(cy) - half), min(H, int(cy) + half)
-        patch = gray[y0:y1, x0:x1]
-        if patch.shape[0] < tpl.shape[0] or patch.shape[1] < tpl.shape[1]:
-            return False  # 窗口越界无法验证
-        _, bw = cv2.threshold(patch, bright, 255, cv2.THRESH_BINARY)
-        if not bw.any():
-            return False  # 全黑（无勾）
-        score = cv2.matchTemplate(bw, tpl, cv2.TM_CCOEFF_NORMED)
-        ms = float(score.max())
-        if ms >= th:
+        ms = cls._cell_check_score(gray, tpl, cx, cy, param)
+        if ms is None:
+            return False
+        if ms >= float(param.get("check_threshold", 0.7)):
             print(f"[ArenaPick] 勾判定 [OK] {ms:.2f} @({int(cx)},{int(cy)})", flush=True)
             return True
         return False
