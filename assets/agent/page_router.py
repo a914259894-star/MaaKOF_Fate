@@ -17,14 +17,17 @@
 判别优先级（用户 2026-11-06 指定：战斗最优先、未知界面等待）：
     战斗 > KOF段位提升 > 胜负结算 > 选人 > 大师团页 > 竞技场主页 > 主城 > 未知
 
-判不出来（未知页）就**等待**，绝不盲点。等待**不是挂起** —— Router 每轮（约 0.5s）
-都会重新截屏重新判，页面一变立刻路由。所以这里只有「一直认不出怎么办」：
+判不出来（未知页）就**挂起等待**，绝不盲点：加载页 / VS 入场 / 一穿三 / 至尊赛播报
+这些都算未知页，一直等到画面变成可识别页面为止，期间一次都不点。
 
-    · 未知满 unknown_back_s（默认 0.5s）→ 进入快通道，每轮本地找一次右上角
-      红色返回箭头；找到才交 ArenaSafeBack 点返回，半秒级自救；
-    · 找不到箭头 → 继续等，一次都不点（转场/加载/VS/一穿三都没有红箭头，
-      这条快通道不会把正常过渡当成「卡住的子页面」去乱点）；
-    · 连红箭头都认不出的怪页面，靠 unknown_back_hard_s（默认 25s）兜底。
+等待**不是卡死** —— Router 每轮（`Arena_UnknownWait.post_delay` = 0.25s）都会重新
+截屏重新判，页面一变立刻路由出去。唯一需要的兜底是「万一永远认不出来」：
+
+    · 连续未知满 `unknown_back_s`（默认 5s）→ 交 ArenaSafeBack 点一次返回，
+      然后立刻回 Router 重判；还是认不出就再等 5s 再点一次。
+      这就是「连续 n 秒一次都认不出，才点一次返回」。
+    · 想只在「真看到返回箭头」时才点（更保守），把 `unknown_need_arrow` 打开；
+      此时 `unknown_back_hard_s` 是它的硬上限，默认也是 5s。
 
 == 为什么判据全部自己算 ==
 `context.run_recognition` 一次 IPC 400~800ms（见 MEMORY 的性能铁律），而 Router
@@ -178,9 +181,9 @@ class ArenaRouter(CustomAction):
         "team_slots": [[126,640],...],   // 大师团页 5 个卡位（缺卡才补人）
         "team_card_threshold": 0.85,
         "match_cooldown_s": 20.0,  // 点过匹配后多久内不再点（等选人页）
-        "unknown_back_s": 0.5,     // 未知满多久开始找返回箭头（找到才点）
-        "unknown_back_hard_s": 25.0, // 一直没有箭头时的硬兜底
-        "unknown_need_arrow": true,  // false = 到点就盲点返回（旧行为，不推荐）
+        "unknown_back_s": 5.0,     // 连续未知多少秒才点一次返回（加载页等就一直等）
+        "unknown_back_hard_s": 5.0, // 仅 unknown_need_arrow=true 时生效的硬上限
+        "unknown_need_arrow": false, // true = 必须真看到返回箭头才点（更保守）
         "click_settle_s": 0.9      // 点完等页面反应的秒数
     }
     """
@@ -211,9 +214,9 @@ class ArenaRouter(CustomAction):
         "team_card_half_h": 56,
         "team_slots": [[126, 640], [262, 640], [400, 640], [537, 640], [674, 640]],
         "match_cooldown_s": 20.0,
-        "unknown_back_s": 0.5,
-        "unknown_back_hard_s": 25.0,
-        "unknown_need_arrow": True,
+        "unknown_back_s": 5.0,
+        "unknown_back_hard_s": 5.0,
+        "unknown_need_arrow": False,
         "click_settle_s": 0.9,
     }
 
@@ -409,44 +412,38 @@ class ArenaRouter(CustomAction):
         return "Arena_MasterMatch"
 
     def _unknown_step(self, color, param) -> str:
-        """未知页：先等；过了 unknown_back_s 才考虑返回，且必须真的看到返回箭头。
+        """未知页：挂起等待，直到画面变成可识别页面；只有「一直认不出」才点一次返回。
 
-        语义（v1.2.31 改，用户要求「别在未知页干等 25 秒」）：
+        未知页包含正常过渡：加载页、VS 入场、一穿三、至尊赛播报。它们的正确处置
+        就是**等**（每 0.25s 重判一次，页面一变立刻路由），一次都不点。
 
-          · 未知页**不是挂起**。Router 每轮（约 0.5s）都会重新截屏重新判页，
-            页面一变就立刻路由出去；这里管的只是「一直认不出」的兜底。
-          · 未知满 `unknown_back_s`（默认 0.5s）后进入快通道：每轮本地找一次
-            右上角红色返回箭头，找到 → 交 ArenaSafeBack 点返回（半秒级自救）。
-          · 找不到箭头 → 继续等，一次都不点。VS 入场 / 加载 / 一穿三 / 至尊赛
-            这些正常过渡页都没有返回箭头（录像 36 帧实测全 None），所以快通道
-            不会把它们误当成「掉进子页面」而乱点。
-          · `unknown_back_hard_s`（默认 25s）是原来的保险丝：真卡在一个连箭头都
-            认不出的怪页面时，到点仍交 ArenaSafeBack 兜底点一次。
+        唯一的兜底是防死循环：连续未知满 `unknown_back_s`（默认 5s）就交
+        ArenaSafeBack 点一次返回，然后马上回 Router 重判；还认不出就再等 5s
+        再点一次。表现为「连续 n 秒一次都认不出 → 点一次返回」。
 
-        为什么不能简单「0.5s 就返回」：加载页每局有 5~7s（见 MEMORY 的血条标定），
-        VS 入场 2~4s。无条件 0.5s 返回 = 在这 10 秒里每半秒盲点一次 (1244,28)，
-        正好复现 v1.2.27「路上误点其他界面」。
+        `unknown_need_arrow=true`（默认关）是更保守的变体：5s 后必须先在本帧
+        看到右上角红色返回箭头才点，看不到就一直等，直到 `unknown_back_hard_s`。
+        默认不用它 —— 加载页最长 5~7s，开着会让每局在加载末尾多点一次右上角。
         """
         now = time.time()
         if getattr(self, "_unknown_since", None) is None:
             self._unknown_since = now
-            print("[Router] 进入未知页，等待（不做任何点击）", flush=True)
+            print("[Router] 进入未知页，挂起等待（不做任何点击）", flush=True)
         waited = now - self._unknown_since
-        quick = float(param.get("unknown_back_s", 0.5))
-        hard = float(param.get("unknown_back_hard_s", 25.0))
-        need_arrow = bool(param.get("unknown_need_arrow", True))
+        limit = float(param.get("unknown_back_s", 5.0))
+        hard = float(param.get("unknown_back_hard_s", limit))
+        need_arrow = bool(param.get("unknown_need_arrow", False))
 
-        if waited >= quick:
+        if waited >= limit:
             arrow = _red_back_xy(color) if (need_arrow and color is not None) else None
             if arrow is not None or not need_arrow or waited >= hard:
                 if arrow is not None:
                     why = f"右上角有返回箭头 {arrow}"
                 elif not need_arrow:
-                    why = "need_arrow=false，按旧逻辑盲点"
+                    why = f"连续 {waited:.1f}s 认不出"
                 else:
-                    why = f"认不出箭头且已超过硬上限 {hard:.0f}s"
-                print(f"[Router] 未知页已持续 {waited:.1f}s（{why}）→ Arena_UnknownBack",
-                      flush=True)
+                    why = f"认不出箭头且已到硬上限 {hard:.0f}s"
+                print(f"[Router] 未知页{why} → Arena_UnknownBack", flush=True)
                 self._unknown_since = None
                 return "Arena_UnknownBack"
         return "Arena_UnknownWait"

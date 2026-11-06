@@ -23,13 +23,13 @@
         "custom_action": "ArenaRouter",
         "custom_action_param": {
             "mode": "1v1",
-            "unknown_back_s": 0.5,
-            "unknown_back_hard_s": 25,
-            "unknown_need_arrow": true
+            "unknown_back_s": 5,
+            "unknown_back_hard_s": 5,
+            "unknown_need_arrow": false
         },
         "pre_delay": 0,
         "post_delay": 0,
-        "rate_limit": 300,
+        "rate_limit": 200,
         "timeout": 60000,
         "next": [
             "Arena_UnknownWait"
@@ -41,13 +41,13 @@
         "custom_action": "ArenaRouter",
         "custom_action_param": {
             "mode": "master",
-            "unknown_back_s": 0.5,
-            "unknown_back_hard_s": 25,
-            "unknown_need_arrow": true
+            "unknown_back_s": 5,
+            "unknown_back_hard_s": 5,
+            "unknown_need_arrow": false
         },
         "pre_delay": 0,
         "post_delay": 0,
-        "rate_limit": 300,
+        "rate_limit": 200,
         "timeout": 60000,
         "next": [
             "Arena_UnknownWait"
@@ -57,7 +57,7 @@
         "recognition": "DirectHit",
         "action": "DoNothing",
         "pre_delay": 0,
-        "post_delay": 200,
+        "post_delay": 250,
         "rate_limit": 200,
         "timeout": 60000,
         "next": [
