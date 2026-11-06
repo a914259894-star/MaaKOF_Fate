@@ -128,13 +128,31 @@ class ArenaPick(CustomAction):
                 print("[ArenaPick] 检测到「确定出手顺序」页（倒计时归零游戏已自动锁定阵容），"
                       "跳过选人放行继续", flush=True)
                 return True
-            return False
+            return self._retry_or_stop("选人没完成")
         if self._order_screen(ctrl, param):
             # 极端情况：选人逻辑走完但期间游戏已自动锁定跳页，确定键不能再点
             print("[ArenaPick] 确定前检测到「确定出手顺序」页（游戏已自动锁定），跳过点确定", flush=True)
             return True
         self._confirm(ctrl, param, confirm_xy)
+        self._fail_n = 0
         return True
+
+    def _retry_or_stop(self, tag: str, limit: int = 3) -> bool:
+        """v1.2.30：选人失败先回 Router 重判，连续 limit 次才真的终止任务。
+
+        单入口结构里 Router 每轮都会重新判页。选人失败最常见的原因是「Router 这
+        一帧判错了页」或「页面正在转场」—— 直接 return False 会让整个挂机停掉
+        （外壳只显示「任务已全部完成」，最容易让人以为是自己点错了）。所以前几次
+        失败改成 return True，让 Router 下一轮再看一眼；连续 3 次还不行才算真失败。
+        """
+        n = getattr(self, "_fail_n", 0) + 1
+        self._fail_n = n
+        if n < limit:
+            print(f"[ArenaPick] [X] {tag}（第 {n}/{limit} 次），交回 Router 重新判页", flush=True)
+            return True
+        self._fail_n = 0
+        print(f"[ArenaPick] [X] {tag}，连续 {limit} 次失败，停止任务", flush=True)
+        return False
 
     # ---------------- 点确定 ----------------
     def _pick_page_present(self, gray, param) -> bool:
@@ -760,8 +778,7 @@ class MasterPick(CustomAction):
         print("[MasterPick] ===== 大师竞技场选人开始 =====", flush=True)
 
         if not self._wait_pick_page(ctrl, param):
-            print("[MasterPick] [X] 等待选人页超时", flush=True)
-            return False
+            return self._retry_or_stop("等待选人页超时")
 
         ok_ban = self._run_phase(ctrl, param, ban=True)
         if self._left_page:
@@ -800,11 +817,22 @@ class MasterPick(CustomAction):
 
         if ok_ban and ok_pick:
             print("[MasterPick] [OK] 禁用与选用均完成", flush=True)
+            self._fail_n = 0
             return True
         if self._left_page or self._left_pick_page(ctrl, param, confirm_gap=0.5):
             print("[MasterPick] [OK] 已离开选人页（顺序确认/战斗），按完成放行", flush=True)
             return True
-        print("[MasterPick] [X] 选人未完成，且仍在选人页", flush=True)
+        return self._retry_or_stop("选人未完成，且仍在选人页")
+
+    def _retry_or_stop(self, tag: str, limit: int = 3) -> bool:
+        """同 ArenaPick：失败先交回 Router 重判，连续 limit 次才真的停任务。"""
+        n = getattr(self, "_fail_n", 0) + 1
+        self._fail_n = n
+        if n < limit:
+            print(f"[MasterPick] [X] {tag}（第 {n}/{limit} 次），交回 Router 重新判页", flush=True)
+            return True
+        self._fail_n = 0
+        print(f"[MasterPick] [X] {tag}，连续 {limit} 次失败，停止任务", flush=True)
         return False
 
     def _run_phase(self, ctrl, param, ban: bool) -> bool:
