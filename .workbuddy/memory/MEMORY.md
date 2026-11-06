@@ -54,11 +54,12 @@
 - Router 用 `override_next(argv.node_name, [目标])` 精确跳转，并 `override_pipeline({目标:{"next":[自己]}})` 改回路。**1v1/大师是两个 Router 节点，不写回路会串模式。**
 - **路由目标必须全是 DirectHit**：override_next 后下一轮还要重新识别，目标若是 TemplateMatch，转场丢帧就识别失败 → 节点不执行、next 空 → 整个 task 结束且外壳打「任务已全部完成」。所以 SettleOk/RankUp/MasterMatch 都改成 DirectHit + 自定义动作（先复核页面才点）。
 - **任何 next 里不许放 Click 节点**（战斗内 Fight_Loop→技能键除外）——这就是 v1.2.27「1v1 误点其他界面」的根因：`Arena_Enter_1v1` 只看 main_arena_btn 且阈值 0.7 就点、`Arena_MasterMatch` 是纯盲点 (1135,634)。
-- **未知页只等待、绝不盲点**（v1.2.31 起：`unknown_back_s=0.5` → 快通道每轮本地找右上角**红色返回箭头**，找到才交 `ArenaSafeBack`，半秒级自救；找不到就继续等；`unknown_back_hard_s=25` 只作「连箭头都认不出的怪页面」兜底。`unknown_need_arrow=false` 可退回旧的「到点就盲点」）。
-  - **不能改成「0.5s 无条件返回」**：VS 入场 2~4s、每局加载 5~7s、一穿三/至尊赛播报全判 unknown，无条件返回 = 这十秒里每半秒盲点 (1244,28)，原样复现 v1.2.27 的误点。
-  - **箭头判据必须用严格版 `page_router._red_back_xy`（y<56、x≥1040），不能用 `CombatFighter._find_red_back`（y<95）**：后者会把战斗 HUD 的红色元素（y=60~86 血条/技能圈）、主城图标、加载页装饰认成箭头。录像 36 帧实测：真箭头（竞技场主页/至尊赛/装备页，y=28~33）全保留，过渡帧误命中 5 处 → 0。
-  - `Arena_UnknownWait.post_delay` 600→200（一轮 500ms），否则「0.5s」实际要 900ms 才生效。
-  - Router 截图改 `_grab_both`：一次 IPC 同时给灰度和彩色（找箭头要红色），不额外截图。
+- **未知页 = 纯等待**（v1.2.32 定稿）：加载页 / VS 入场 / 一穿三 / 至尊赛播报都算未知页，每 **0.25s** 重判一次，变成可识别页面立刻路由，期间**一次都不点**。兜底 = **连续 `unknown_back_s=5` 秒**一次都认不出才点一次返回，点完回 Router 重新数 5s。
+  - 0.25s 必须两处一起改才生效：`Arena_UnknownWait.post_delay=250` **且** Router `rate_limit=200`，否则 rate_limit 把轮询兜成 0.3s+。
+  - **v1.2.31 的教训（别再犯）**：中间试过「0.5s + 必须看到红箭头才点」，录像验证确实不误点，但用户要的语义是「等」不是「提前返回」——他说的「500ms」指的是**轮询间隔**，不是触发返回的秒数。含糊需求先复述两种解读让他选，别直接改。
+  - **箭头判据若要启用必须用严格版 `page_router._red_back_xy`（y<56、x≥1040）**，不能用 `CombatFighter._find_red_back`（y<95）：后者会把战斗 HUD y=60~86 的红色元素、主城图标、加载页装饰认成箭头。录像 36 帧实测真箭头（竞技场主页/至尊赛/装备页，y=28~33）全保留、过渡帧误命中 5→0。默认 `unknown_need_arrow=false`。
+  - 已知边界：加载页最长 5~7s，5s 兜底可能落在加载末尾点一次右上角。现场若看到，把 `unknown_back_s` 调到 8。
+  - Router 截图用 `_grab_both`：一次 IPC 同时给灰度和彩色（找箭头要红色），不额外截图。
 - **大师团页必须再分一步**（`_team_step`）：卡位全有卡 → `Arena_MasterMatch`，缺卡 → `Arena_TeamFix`。不分就是 `Router→TeamFix→Router→TeamFix` 死循环，永远不点匹配。
 - **卡位判据 Router 用 0.72、TeamFix 用 0.85**：现场帧第 3 卡位只有 0.776（头像挡了半个 SSR 标签）但队伍是满的。宁可判满员去匹配，也不要判缺人（会点下阵）。
 - **`match_cooldown_s=20`**：点完「匹配战斗」页面不变（匹配中），不拦的话 Router 每 300ms 判一次 team，会把刚发起的匹配连点几十下。
