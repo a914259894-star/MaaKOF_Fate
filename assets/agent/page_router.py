@@ -17,8 +17,14 @@
 判别优先级（用户 2026-11-06 指定：战斗最优先、未知界面等待）：
     战斗 > KOF段位提升 > 胜负结算 > 选人 > 大师团页 > 竞技场主页 > 主城 > 未知
 
-判不出来（未知页）就**等待**，绝不盲点；持续未知超过 unknown_back_s 才交给
-ArenaSafeBack 点一次返回（它自己还会复核「是不是已经在竞技场/主城」）。
+判不出来（未知页）就**等待**，绝不盲点。等待**不是挂起** —— Router 每轮（约 0.5s）
+都会重新截屏重新判，页面一变立刻路由。所以这里只有「一直认不出怎么办」：
+
+    · 未知满 unknown_back_s（默认 0.5s）→ 进入快通道，每轮本地找一次右上角
+      红色返回箭头；找到才交 ArenaSafeBack 点返回，半秒级自救；
+    · 找不到箭头 → 继续等，一次都不点（转场/加载/VS/一穿三都没有红箭头，
+      这条快通道不会把正常过渡当成「卡住的子页面」去乱点）；
+    · 连红箭头都认不出的怪页面，靠 unknown_back_hard_s（默认 25s）兜底。
 
 == 为什么判据全部自己算 ==
 `context.run_recognition` 一次 IPC 400~800ms（见 MEMORY 的性能铁律），而 Router
@@ -81,6 +87,71 @@ def _match(gray, rel: str, roi) -> tuple[float, tuple[int, int]]:
     return float(mx), (x0 + mloc[0] + tw // 2, y0 + mloc[1] + th // 2)
 
 
+def _grab_both(ctrl):
+    """截一张图，同时给出 (1280 基准灰度, 1280 基准彩色)。
+
+    为什么要彩色：未知页要靠「红色返回箭头」做守卫，灰度图取不到红色。
+    不要为了彩色再截一次 —— 一次 IPC 就是 100ms 级别。
+
+    用 `img.size` 判断空图，和 ArenaSafeBack / ArenaPick 的口径保持一致：
+    `if img is None` 挡不住「0 字节的帧」，那会让 resize 抛异常。
+    """
+    ctrl.post_screencap().wait()
+    img = ctrl.cached_image
+    if img is None or not getattr(img, "size", 0):
+        return None, None
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    sc = img.shape[1] / 1280.0
+    if abs(sc - 1.0) > 0.01:
+        img = cv2.resize(img, (1280, int(img.shape[0] / sc)), interpolation=cv2.INTER_AREA)
+    return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), img
+
+
+def _red_back_xy(color, x0=1040, x1=1280, y0=0, y1=56):
+    """右上角「红色返回箭头」中心（1280 基准），认不到返回 None。
+
+    和 `CombatFighter._find_red_back` 的唯一区别是 ROI：那边用 x>=900 / y<95，
+    y 放到 95 是为了兼顾各种子页面，但也把战斗 HUD 里 y=60~86 的红色元素
+    （血条、技能光圈、主城图标）一起捞进来了。Router 只在未知页用它，口径必须是
+    **宁可漏判也不能误判**：漏判 = 继续等（无害），误判 = 在正常转场上白点一下。
+
+    录像 36 帧实测（debug/_vid3，1200 帧抽帧）：
+        真返回箭头   竞技场主页 / 至尊赛 (1242~1244, 28)、装备页 (1110, 33)
+        误命中       战斗 HUD (1213~1264, 60~86)、主城 (1244, 86)、加载页 (1267, 85)
+    按 y<56 收紧后：真箭头 y=28~33（余量 23px）全部保留，误命中全部切掉。
+    """
+    try:
+        h, w = color.shape[:2]
+        if w != 1280:
+            color = cv2.resize(color, (1280, max(1, int(round(h * 1280.0 / w)))),
+                               interpolation=cv2.INTER_AREA)
+        roi = color[int(y0):int(y1), int(x0):int(x1)]
+        if roi.size == 0:
+            return None
+        b = roi[:, :, 0].astype("int16")
+        g = roi[:, :, 1].astype("int16")
+        r = roi[:, :, 2].astype("int16")
+        red = (r - cv2.max(g, b)).clip(0, 255).astype("uint8")
+        mask = (red > 55).astype("uint8") * 255
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE,
+                                cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)))
+        cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        best = None
+        for c in cnts:
+            bx, by, bw, bh = cv2.boundingRect(c)
+            if bw * bh < 250 or bw < 14 or bh < 10 or bw > 130 or bh > 95:
+                continue
+            cx = bx + bw / 2.0 + x0
+            if best is None or cx > best[0]:
+                best = (cx, by + bh / 2.0)
+        if best is None:
+            return None
+        return int(round(best[0])), int(round(best[1]))
+    except Exception:
+        return None
+
+
 def _click(ctrl, xy, settle_ms=800, why="") -> None:
     print(f"[Router] 点击{why} {int(xy[0])},{int(xy[1])}", flush=True)
     ctrl.post_click(int(xy[0]), int(xy[1])).wait()
@@ -107,7 +178,9 @@ class ArenaRouter(CustomAction):
         "team_slots": [[126,640],...],   // 大师团页 5 个卡位（缺卡才补人）
         "team_card_threshold": 0.85,
         "match_cooldown_s": 20.0,  // 点过匹配后多久内不再点（等选人页）
-        "unknown_back_s": 25.0,    // 连续未知多少秒才点一次返回
+        "unknown_back_s": 0.5,     // 未知满多久开始找返回箭头（找到才点）
+        "unknown_back_hard_s": 25.0, // 一直没有箭头时的硬兜底
+        "unknown_need_arrow": true,  // false = 到点就盲点返回（旧行为，不推荐）
         "click_settle_s": 0.9      // 点完等页面反应的秒数
     }
     """
@@ -138,7 +211,9 @@ class ArenaRouter(CustomAction):
         "team_card_half_h": 56,
         "team_slots": [[126, 640], [262, 640], [400, 640], [537, 640], [674, 640]],
         "match_cooldown_s": 20.0,
-        "unknown_back_s": 25.0,
+        "unknown_back_s": 0.5,
+        "unknown_back_hard_s": 25.0,
+        "unknown_need_arrow": True,
         "click_settle_s": 0.9,
     }
 
@@ -165,7 +240,7 @@ class ArenaRouter(CustomAction):
         node = argv.node_name or "Arena_Router"
         ctrl = context.tasker.controller
 
-        gray = ArenaPick._grab_1280(ctrl)
+        gray, color = _grab_both(ctrl)
         if gray is None:
             print("[Router] 截图失败，本轮按未知页等待", flush=True)
             self._route(context, node, "Arena_UnknownWait")
@@ -174,7 +249,7 @@ class ArenaRouter(CustomAction):
         kind = self._detect(gray, param, mode)
 
         if kind == "unknown":
-            target = self._unknown_step(ctrl, param)
+            target = self._unknown_step(color, param)
         elif kind == "arena":
             self._click_arena_entry(ctrl, gray, param, mode)
             target = node
@@ -333,19 +408,47 @@ class ArenaRouter(CustomAction):
             return "Arena_UnknownWait"
         return "Arena_MasterMatch"
 
-    def _unknown_step(self, ctrl, param) -> str:
-        """未知页：先等待；连续未知够久才交给安全返回（避免卡死在子页面）。"""
+    def _unknown_step(self, color, param) -> str:
+        """未知页：先等；过了 unknown_back_s 才考虑返回，且必须真的看到返回箭头。
+
+        语义（v1.2.31 改，用户要求「别在未知页干等 25 秒」）：
+
+          · 未知页**不是挂起**。Router 每轮（约 0.5s）都会重新截屏重新判页，
+            页面一变就立刻路由出去；这里管的只是「一直认不出」的兜底。
+          · 未知满 `unknown_back_s`（默认 0.5s）后进入快通道：每轮本地找一次
+            右上角红色返回箭头，找到 → 交 ArenaSafeBack 点返回（半秒级自救）。
+          · 找不到箭头 → 继续等，一次都不点。VS 入场 / 加载 / 一穿三 / 至尊赛
+            这些正常过渡页都没有返回箭头（录像 36 帧实测全 None），所以快通道
+            不会把它们误当成「掉进子页面」而乱点。
+          · `unknown_back_hard_s`（默认 25s）是原来的保险丝：真卡在一个连箭头都
+            认不出的怪页面时，到点仍交 ArenaSafeBack 兜底点一次。
+
+        为什么不能简单「0.5s 就返回」：加载页每局有 5~7s（见 MEMORY 的血条标定），
+        VS 入场 2~4s。无条件 0.5s 返回 = 在这 10 秒里每半秒盲点一次 (1244,28)，
+        正好复现 v1.2.27「路上误点其他界面」。
+        """
         now = time.time()
         if getattr(self, "_unknown_since", None) is None:
             self._unknown_since = now
-            print("[Router] 进入未知页，开始等待（不做任何点击）", flush=True)
+            print("[Router] 进入未知页，等待（不做任何点击）", flush=True)
         waited = now - self._unknown_since
-        limit = float(param.get("unknown_back_s", 25.0))
-        if waited >= limit:
-            print(f"[Router] 未知页已持续 {waited:.0f}s（>{limit:.0f}s），交给安全返回",
-                  flush=True)
-            self._unknown_since = None
-            return "Arena_UnknownBack"
+        quick = float(param.get("unknown_back_s", 0.5))
+        hard = float(param.get("unknown_back_hard_s", 25.0))
+        need_arrow = bool(param.get("unknown_need_arrow", True))
+
+        if waited >= quick:
+            arrow = _red_back_xy(color) if (need_arrow and color is not None) else None
+            if arrow is not None or not need_arrow or waited >= hard:
+                if arrow is not None:
+                    why = f"右上角有返回箭头 {arrow}"
+                elif not need_arrow:
+                    why = "need_arrow=false，按旧逻辑盲点"
+                else:
+                    why = f"认不出箭头且已超过硬上限 {hard:.0f}s"
+                print(f"[Router] 未知页已持续 {waited:.1f}s（{why}）→ Arena_UnknownBack",
+                      flush=True)
+                self._unknown_since = None
+                return "Arena_UnknownBack"
         return "Arena_UnknownWait"
 
     # ---------------------------------------------------------------- 路由
