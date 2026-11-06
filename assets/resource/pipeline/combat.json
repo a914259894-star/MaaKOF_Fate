@@ -115,15 +115,7 @@
             "ko_low_px": 12
         },
         "timeout": 960000,
-        "next": [
-            "Arena_RankUp",
-            "Fight_Win",
-            "Fight_Lose",
-            "Arena_MainPage",
-            "Arena_MasterPage",
-            "Arena_HomePage",
-            "Arena_UnknownBack"
-        ]
+        "next": []
     },
     "Fight_Loop": {
         "recognition": "DirectHit",

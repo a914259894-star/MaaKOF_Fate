@@ -63,6 +63,7 @@ from combat_actions import (
 from combat_recognition import CombatAlwaysHit, SkillReadyBright
 from farm_actions import FarmTap
 from arena_actions import ArenaPick, MasterPick, MasterTeamFix
+from page_router import ArenaRouter, ArenaSettleOk, ArenaRankUp, ArenaMasterMatch
 
 # (注册名, 实例)
 CUSTOM_ACTIONS = [
@@ -75,6 +76,10 @@ CUSTOM_ACTIONS = [
     ("MasterPick", MasterPick()),  # 大师竞技场选人（先禁用后选用）
     ("MasterTeamFix", MasterTeamFix()),  # 大师团页：补回被盲点误点下阵的角色
     ("ArenaSafeBack", ArenaSafeBack()),  # 兜底返回：已离开战斗就不点返回
+    ("ArenaRouter", ArenaRouter()),  # 单入口页面路由器（v1.2.30）
+    ("ArenaSettleOk", ArenaSettleOk()),  # 结算页点确定（带守卫的 DirectHit 版）
+    ("ArenaRankUp", ArenaRankUp()),  # KOF段位提升弹窗点确认
+    ("ArenaMasterMatch", ArenaMasterMatch()),  # 大师团页点匹配战斗（带页面守卫）
 ]
 
 CUSTOM_RECOGNITIONS = [

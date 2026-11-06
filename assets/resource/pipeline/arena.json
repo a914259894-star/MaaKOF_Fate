@@ -1,4 +1,65 @@
 {
+    "Arena_Enter_1v1": {
+        "recognition": "DirectHit",
+        "action": "DoNothing",
+        "rate_limit": 200,
+        "timeout": 60000,
+        "next": [
+            "Arena_Router"
+        ]
+    },
+    "Arena_Enter_Master": {
+        "recognition": "DirectHit",
+        "action": "DoNothing",
+        "rate_limit": 200,
+        "timeout": 60000,
+        "next": [
+            "Arena_Router_Master"
+        ]
+    },
+    "Arena_Router": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "ArenaRouter",
+        "custom_action_param": {
+            "mode": "1v1",
+            "unknown_back_s": 25
+        },
+        "pre_delay": 0,
+        "post_delay": 0,
+        "rate_limit": 300,
+        "timeout": 60000,
+        "next": [
+            "Arena_UnknownWait"
+        ]
+    },
+    "Arena_Router_Master": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "ArenaRouter",
+        "custom_action_param": {
+            "mode": "master",
+            "unknown_back_s": 25
+        },
+        "pre_delay": 0,
+        "post_delay": 0,
+        "rate_limit": 300,
+        "timeout": 60000,
+        "next": [
+            "Arena_UnknownWait"
+        ]
+    },
+    "Arena_UnknownWait": {
+        "recognition": "DirectHit",
+        "action": "DoNothing",
+        "pre_delay": 0,
+        "post_delay": 600,
+        "rate_limit": 200,
+        "timeout": 60000,
+        "next": [
+            "Arena_Router"
+        ]
+    },
     "Arena_UnknownBack": {
         "recognition": "DirectHit",
         "action": "Custom",
@@ -14,123 +75,51 @@
         "pre_delay": 200,
         "post_delay": 1500,
         "rate_limit": 3000,
+        "timeout": 60000,
         "next": [
-            "Arena_RankUp",
-            "Fight_Win",
-            "Fight_Lose",
-            "Arena_MainPage",
-            "Arena_MasterPage",
-            "Arena_HomePage",
-            "Arena_UnknownBack"
+            "Arena_Router"
         ]
     },
-    "Arena_HomePage": {
-        "recognition": "TemplateMatch",
-        "template": "arena/main_arena_btn.png",
-        "green_mask": false,
-        "threshold": 0.7,
-        "action": "DoNothing",
-        "rate_limit": 1000,
-        "timeout": 30000,
+    "Arena_SettleOk": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "ArenaSettleOk",
+        "custom_action_param": {
+            "threshold": 0.8,
+            "settle_ms": 1000
+        },
+        "pre_delay": 0,
+        "post_delay": 200,
+        "rate_limit": 500,
+        "timeout": 60000,
         "next": [
-            "Arena_Enter_1v1"
+            "Arena_Router"
         ]
     },
-    "Arena_MainPage": {
-        "recognition": "TemplateMatch",
-        "template": "arena/arena_title.png",
-        "green_mask": false,
-        "threshold": 0.8,
-        "action": "DoNothing",
-        "rate_limit": 1000,
-        "next": [
-            "Arena_WaitBattle",
-            "Arena_Mode_1v1",
-            "Arena_Enter_1v1",
-            "Arena_Mode_Master",
-            "Arena_Enter_Master"
-        ]
-    },
-    "Arena_Enter_1v1": {
-        "recognition": "TemplateMatch",
-        "template": "arena/main_arena_btn.png",
-        "green_mask": false,
-        "threshold": 0.7,
-        "action": "Click",
-        "pre_delay": 300,
-        "post_delay": 1800,
-        "rate_limit": 1000,
-        "timeout": 30000,
-        "next": [
-            "Arena_Mode_1v1"
-        ]
-    },
-    "Arena_Enter_Master": {
-        "recognition": "TemplateMatch",
-        "template": [
-            "arena/main_arena_btn.png",
-            "arena/mode_master.png",
-            "arena/master_title.png"
-        ],
-        "green_mask": false,
-        "threshold": 0.7,
-        "action": "Click",
-        "pre_delay": 300,
-        "post_delay": 1000,
-        "rate_limit": 1000,
-        "timeout": 30000,
-        "next": [
-            "Arena_Mode_Master",
-            "Arena_MasterPage"
-        ]
-    },
-    "Arena_Mode_1v1": {
-        "recognition": "TemplateMatch",
-        "template": "arena/mode_1v1.png",
-        "green_mask": false,
-        "threshold": 0.7,
-        "action": "Click",
-        "target": [
-            621,
-            196,
-            4,
-            4
-        ],
-        "pre_delay": 500,
-        "post_delay": 1000,
+    "Arena_RankUp": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "ArenaRankUp",
+        "custom_action_param": {
+            "roi": [
+                300,
+                60,
+                720,
+                130
+            ],
+            "threshold": 0.8,
+            "confirm_xy": [
+                639,
+                611
+            ],
+            "settle_ms": 1500
+        },
+        "pre_delay": 200,
+        "post_delay": 200,
         "rate_limit": 1000,
         "timeout": 60000,
         "next": [
-            "Arena_WaitPick"
-        ]
-    },
-    "Arena_Mode_Master": {
-        "recognition": "TemplateMatch",
-        "template": "arena/mode_master.png",
-        "green_mask": false,
-        "threshold": 0.85,
-        "action": "Click",
-        "pre_delay": 500,
-        "post_delay": 1500,
-        "rate_limit": 1000,
-        "timeout": 30000,
-        "next": [
-            "Arena_MasterPage"
-        ]
-    },
-    "Arena_WaitPick": {
-        "recognition": "TemplateMatch",
-        "template": [
-            "arena/pick_recent.png",
-            "arena/pick_wait.png"
-        ],
-        "green_mask": false,
-        "threshold": 0.8,
-        "action": "DoNothing",
-        "rate_limit": 1000,
-        "timeout": 120000,
-        "next": [
-            "Arena_Pick"
+            "Arena_Router"
         ]
     },
     "Arena_Pick": {
@@ -213,83 +202,54 @@
         },
         "timeout": 300000,
         "next": [
-            "Arena_WaitBattle",
-            "Arena_MainPage",
-            "Arena_Mode_1v1",
-            "Arena_Enter_1v1"
+            "Arena_Router"
         ]
     },
-    "Arena_WaitBattle": {
-        "recognition": "TemplateMatch",
-        "template": [
-            "arena/battle_hp1.png",
-            "arena/battle_hp2.png"
-        ],
-        "roi": [
-            88,
-            14,
-            1104,
-            38
-        ],
-        "green_mask": false,
-        "threshold": 0.65,
-        "action": "DoNothing",
-        "rate_limit": 1000,
-        "timeout": 90000,
+    "Arena_MasterPick": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "MasterPick",
+        "custom_action_param": {
+            "ban_picks": "1,1,1;2,1,1;3,1,1",
+            "pick_picks": "1,1,1;2,1,1;3,1,1;4,1,1;5,1,1",
+            "ban_count": 2,
+            "pick_count": 3,
+            "role_threshold": 0.86,
+            "role_threshold_low": 0.82,
+            "role_gap": 0.12,
+            "ban_threshold": 0.6,
+            "check_threshold": 0.55,
+            "ban_confirm": false,
+            "confirm_xy": [
+                622,
+                638
+            ],
+            "pick_page_timeout": 60,
+            "pick_phase_timeout": 45,
+            "ban_min_wait": 22,
+            "pick_phase_roi": [
+                520,
+                645,
+                240,
+                70
+            ],
+            "pick_phase_threshold": 0.75,
+            "confirm_wait": 6,
+            "confirm_settle": 1.2,
+            "fallback_max": 15,
+            "mark_timeout": 2.0,
+            "mark_poll": 0.12,
+            "pick_page_roi": [
+                340,
+                320,
+                240,
+                140
+            ],
+            "pick_page_threshold": 0.8
+        },
+        "timeout": 240000,
         "next": [
-            "Fight_Once"
-        ]
-    },
-    "Arena_SettleOk": {
-        "recognition": "TemplateMatch",
-        "template": "arena/settle_confirm.png",
-        "green_mask": false,
-        "threshold": 0.8,
-        "order_by": "Score",
-        "action": "Click",
-        "pre_delay": 200,
-        "post_delay": 1000,
-        "rate_limit": 1000,
-        "timeout": 60000,
-        "next": [
-            "Arena_RankUp",
-            "Arena_LeaveSettle",
-            "Arena_SettleOk"
-        ]
-    },
-    "Arena_LeaveSettle": {
-        "recognition": "TemplateMatch",
-        "template": [
-            "arena/win_text.png",
-            "arena/lose_text.png",
-            "arena/settle_confirm.png"
-        ],
-        "green_mask": false,
-        "threshold": 0.7,
-        "inverse": true,
-        "action": "DoNothing",
-        "rate_limit": 500,
-        "timeout": 60000,
-        "next": [
-            "Arena_RankUp",
-            "Arena_MainPage",
-            "Arena_WaitBattle",
-            "Arena_Mode_1v1",
-            "Arena_Enter_1v1",
-            "Arena_MasterPage",
-            "Arena_Mode_Master"
-        ]
-    },
-    "Arena_MasterPage": {
-        "recognition": "TemplateMatch",
-        "template": "arena/master_title.png",
-        "green_mask": false,
-        "threshold": 0.8,
-        "action": "DoNothing",
-        "rate_limit": 1000,
-        "timeout": 30000,
-        "next": [
-            "Arena_TeamFix"
+            "Arena_Router"
         ]
     },
     "Arena_TeamFix": {
@@ -355,121 +315,35 @@
         "rate_limit": 500,
         "timeout": 30000,
         "next": [
-            "Arena_MasterMatch"
+            "Arena_Router"
         ]
     },
     "Arena_MasterMatch": {
         "recognition": "DirectHit",
-        "action": "Click",
-        "target": [
-            1135,
-            634,
-            80,
-            35
-        ],
-        "pre_delay": 300,
-        "post_delay": 1200,
-        "rate_limit": 2000,
-        "timeout": 30000,
-        "next": [
-            "Arena_MasterWaitPick",
-            "Arena_MasterPage"
-        ]
-    },
-    "Arena_MasterWaitPick": {
-        "recognition": "TemplateMatch",
-        "template": "arena/pick_wait.png",
-        "green_mask": false,
-        "threshold": 0.8,
-        "action": "DoNothing",
-        "rate_limit": 1000,
-        "timeout": 180000,
-        "next": [
-            "Arena_MasterPick"
-        ]
-    },
-    "Arena_MasterPick": {
-        "recognition": "DirectHit",
         "action": "Custom",
-        "custom_action": "MasterPick",
+        "custom_action": "ArenaMasterMatch",
         "custom_action_param": {
-            "ban_picks": "1,1,1;2,1,1;3,1,1",
-            "pick_picks": "1,1,1;2,1,1;3,1,1;4,1,1;5,1,1",
-            "ban_count": 2,
-            "pick_count": 3,
-            "role_threshold": 0.86,
-            "role_threshold_low": 0.82,
-            "role_gap": 0.12,
-            "ban_threshold": 0.6,
-            "check_threshold": 0.55,
-            "ban_confirm": false,
-            "confirm_xy": [
-                622,
-                638
+            "roi": [
+                380,
+                20,
+                560,
+                90
             ],
-            "pick_page_timeout": 60,
-            "pick_phase_timeout": 45,
-            "ban_min_wait": 22,
-            "pick_phase_roi": [
-                520,
-                645,
-                240,
-                70
+            "threshold": 0.85,
+            "target": [
+                1135,
+                634,
+                80,
+                35
             ],
-            "pick_phase_threshold": 0.75,
-            "confirm_wait": 6,
-            "confirm_settle": 1.2,
-            "fallback_max": 15,
-            "mark_timeout": 2.0,
-            "mark_poll": 0.12,
-            "pick_page_roi": [
-                340,
-                320,
-                240,
-                140
-            ],
-            "pick_page_threshold": 0.8
+            "settle_ms": 1200
         },
-        "timeout": 240000,
-        "next": [
-            "Arena_WaitBattle",
-            "Arena_MasterPage",
-            "Arena_Mode_Master",
-            "Arena_Enter_Master",
-            "Arena_MainPage"
-        ]
-    },
-    "Arena_RankUp": {
-        "recognition": "TemplateMatch",
-        "template": "arena/rank_up_title.png",
-        "green_mask": false,
-        "threshold": 0.8,
-        "roi": [
-            300,
-            60,
-            720,
-            130
-        ],
-        "action": "Click",
-        "target": [
-            590,
-            592,
-            98,
-            38
-        ],
         "pre_delay": 300,
-        "post_delay": 1500,
-        "rate_limit": 1500,
-        "timeout": 30000,
+        "post_delay": 200,
+        "rate_limit": 2000,
+        "timeout": 60000,
         "next": [
-            "Arena_SettleOk",
-            "Arena_MainPage",
-            "Arena_MasterPage",
-            "Arena_HomePage",
-            "Arena_Mode_1v1",
-            "Arena_Enter_1v1",
-            "Arena_Enter_Master",
-            "Arena_RankUp"
+            "Arena_Router"
         ]
     }
 }

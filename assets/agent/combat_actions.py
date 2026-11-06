@@ -695,7 +695,7 @@ class CombatFighter(CustomAction):
 
         只做「高阈值 + 全屏」：主城图标位置随 UI 版本会变，写死 ROI 不划算；
         阈值 0.85 比节点里的 0.7 更严，避免在竞技场页误命中（真误命中也无害：
-        竞技场页有 arena_title，流水线会先走 Arena_MainPage）。
+        竞技场页有 arena_title，Router 会先判成「竞技场主页」）。
         """
         tpl = cls._load_tpl("main_arena_btn")
         if tpl is None:
@@ -1005,7 +1005,7 @@ class CombatFighter(CustomAction):
           入口全在这一页），于是「退出→又被点进去→再退出」反复循环；多按几次返回
           就掉进主城，主城底部导航被盲点砸中 → 点进装备页 → 继续乱点。
           现在：复核失败 = 画面被残留点击带走了，说明已经离开战斗 → 一样收手，
-          剩下的交给流水线（Arena_MainPage / Arena_Enter_1v1 / Arena_UnknownBack
+          剩下的交给流水线（v1.2.30 起统一由 Arena_Router 重新判页 / Arena_UnknownBack
           都会一步步认页面，比盲点可靠得多，也不会再点进别的页）。
         """
         wrong_th = float(param.get("wrong_threshold", 0.85))
@@ -1331,7 +1331,7 @@ class ArenaSafeBack(CustomAction):
 
     现在改成自定义动作：
       · 已经在竞技场页 / 大师团页 / 主城 → **不点**，直接放行，让 next 里的
-        Arena_MainPage / Arena_MasterPage / Arena_HomePage 去接管；
+        Arena_Router（v1.2.30 的单入口路由器）去接管；
       · 认出别的子页面（至尊赛/排行榜/商城/装备页…）→ 才点一次返回。
     点返回的位置优先用红色箭头识别（_find_red_back），识别不到才用 back_xy。
 
@@ -1353,7 +1353,7 @@ class ArenaSafeBack(CustomAction):
             print("[SafeBack] 已在竞技场/大师页，不点返回（交给 next 接手）", flush=True)
             return True
         if CombatFighter._home_page_hit(gray, param):
-            print("[SafeBack] 已在主城，不点返回（交给 Arena_HomePage 重新进竞技场）", flush=True)
+            print("[SafeBack] 已在主城，不点返回（交给 Arena_Router 判成主城后点「KO竞技」）", flush=True)
             return True
 
         back_xy = param.get("back_xy", [1244, 28])
