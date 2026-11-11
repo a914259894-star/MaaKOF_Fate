@@ -5,7 +5,8 @@
 
     · 入口在主城右上角第二排的鸟居图标，不在擂台里
     · 匹配是 PVP（对面是真人），匹配中页面完全不变
-    · 选人是横排 8 格大立绘 + 底部 3 个队伍槽，满 3 自动锁定，**没有「确定」**
+    · 选人是横排 8 格大立绘 + 底部 3 个队伍槽，选满 3 人后**必须点「确定」**，
+      不点就一直停在那一页（不会自动锁定）
     · 战斗是 3v3 多回合，每回合结束都弹 WINNER，但战斗不退出
     · 整场结算写「战斗胜利 / 战斗失败」+「点击空白处关闭」，**没有确定按钮**
     · 结算后还有一段角色展示加载，然后才回道馆页
@@ -17,7 +18,8 @@
     gym_match      道馆挑战页        1.000    0.551（战斗）
     gym_vsok       匹配成功 VS       1.000    0.401
     gym_picktip    选人页(未满)      1.000    0.709（结算页）
-    gym_pickwait   选人页(已满 3)    1.000    0.720（结算页）
+    gym_pickwait   选人页(已确定)    1.000    0.720（结算页）
+    gym_confirm    选人页(满 3 未确定) 1.000   0.6x（其余所有页）
     gym_close      整场结算页        1.000    0.488
 
 `gym_close` 用「点击空白处关闭」而不是「战斗胜利/失败」—— 这行小字胜负两边
@@ -25,6 +27,17 @@
 
 `gym_picktip` / `gym_pickwait` 在同一行同一位置（文字互相替换），所以两者对
 对方页面都有 0.7 左右的虚高，阈值统一 0.85 能分开（0.72 vs 0.97~1.00）。
+
+选人页其实有**三个**状态，第三个「满 3 人未确定」只有 `gym_confirm`（红色确定
+按钮，1280 下 (560,605)-(720,653)）认得出。全片 128 帧扫描：它只在 24.0s 那一帧
+命中，其余所有页面都 < 0.85 —— 唯一的窗口，少认它就会把这一段判成未知页。
+
+战斗为什么不能直接用竞技场的 `Fight_Once`：战斗循环本身就是同一份
+`CombatFighter` 代码、同一批参数（`_test_v1233.py` 的 [8] 组逐项比对，只允许多
+出 `gym_result_threshold` / `gym_result_roi` 两个键）。差别只在**退出条件** ——
+竞技场靠 `win_text`/`lose_text` 判结算，而道馆结算页拿这两个模板实测只有
+0.185 / 0.127，根本认不出。所以必须是独立节点：同一份逻辑 + 多一个识破道馆
+结算页的判据。少了它，打完一局没人认结算，会一直空点到 duration 到期。
 """
 
 from __future__ import annotations
@@ -84,7 +97,7 @@ class GymRouter(CustomAction):
             "vsok_roi": [470,545,340,120],  "vsok_threshold": 0.85,
             "page_roi": [0,0,260,90],       "page_threshold": 0.85,
             "home_roi": [0,0,0,0],          "home_threshold": 0.85,
-            "unknown_back_s": 25.0
+            "unknown_back_s": 45.0
         }
 
     判页顺序（不能随便调，理由见各分支注释）：
@@ -104,9 +117,10 @@ class GymRouter(CustomAction):
         "page_threshold": 0.85,
         "home_roi": [0, 0, 0, 0],
         "home_threshold": 0.85,
-        # VS 倒计时实测 16 秒，加载/角色展示各 2~4 秒，都落进「未知页」。
-        # 竞技场那边是 5 秒兜底，这里必须放宽到 25，否则会在 VS 展示中途点返回。
-        "unknown_back_s": 25.0,
+        # 实测：点完「确定」→ 开打之间有连续 **25 秒** 认不出的画面
+        # （VS 登场 15 秒倒数 → 战斗准备中 + 资源加载 → ROUND 1）。竞技场那边
+        # 是 5 秒兜底，这里必须放宽到 45，否则会在 VS 中途点返回把对局退掉。
+        "unknown_back_s": 45.0,
     }
 
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
@@ -163,10 +177,13 @@ class GymRouter(CustomAction):
         if _match(gray, "gym_close", p["result_roi"])[0] >= p["result_threshold"]:
             return "result"
 
-        # 3) 选人页：底部提示条。未满 3 人是「请选择格斗家(X/3)」，
-        #    满 3 人变成「等待对方确定中」，两个模板都要认。
+        # 3) 选人页：底部提示条 / 「确定」按钮。三种状态都要认 ——
+        #    未满 3 人是「请选择格斗家(X/3)」；满 3 人提示消失、原地长出红色
+        #    「确定」；点过确定变成「等待对方确定中」。少认一个，那一段就会被
+        #    判成未知页，25 秒后点返回把刚匹配到的对局退掉。
         if (_match(gray, "gym_picktip", p["pick_roi"])[0] >= p["pick_threshold"]
-                or _match(gray, "gym_pickwait", p["pick_roi"])[0] >= p["pick_threshold"]):
+                or _match(gray, "gym_pickwait", p["pick_roi"])[0] >= p["pick_threshold"]
+                or _match(gray, "gym_confirm", p["pick_roi"])[0] >= p["pick_threshold"]):
             return "pick"
 
         # 4) 匹配成功 VS：只等待，不点。放道馆页之前 —— 这个页面的背景是
@@ -331,21 +348,30 @@ class GymPage(CustomAction):
 
 
 class GymPick(CustomAction):
-    """选人页 → 依次点第 1~3 格，满 3 个自动锁定。
+    """选人页 → 点前 3 格 → 点「确定」。
 
-    为什么要逐格检查：点一格立刻看底部提示有没有变成「等待对方确定中」，
-    满了就停手。这样即使某一格点击没生效（转场丢帧），也只会少点一格，
-    不会把已经选中的角色再点一次（那是 toggle，会取消）——v1.2.27 在竞技场
-    快速选人上踩过这个坑，代价是角色被点掉。
+    三个阶段（录像 18~26s 逐帧实测）：
 
-    进页时是 0/3（游戏不会预选），所以首轮三格各点一次是安全的。
+        0/3、1/3、2/3   底部提示「温馨提示：请选择格斗家 (X/3)」，可点立绘
+        3/3 未确定      提示消失，底部中央出现红色「确定」按钮（gym_confirm）
+        已确定          提示变成「等待对方确定中」（gym_pickwait），等对手
+
+    **满 3 个不会自动锁定，必须点「确定」**。之前误以为会自动锁定，导致
+    点完 3 格后傻等「等待对方确定中」等到超时，然后又重进这一页把角色 toggle 掉。
+
+    防 toggle：点每格之前先看那一格有没有金色勾环（gym_check）。有就跳过 ——
+    这样即使上一次点击没生效（转场丢帧）重跑一轮，也只补点缺的那格。
+    立绘列中心实测 x = 96 + 152k（勾环在 f023.5 上量到 552/856/1008），y = 185。
     """
 
     DEFAULTS = {
-        "slots": [[105, 185], [257, 185], [409, 185]],   # 前 3 格中心（1280 基准）
+        "slots": [[96, 185], [248, 185], [400, 185]],   # 8 列立绘中心的第 1~3 列
         "tip_roi": [520, 600, 260, 100],
         "tip_threshold": 0.85,
+        "check_pad": 40,                # 勾环 73x73，ROI 取 80x80
+        "check_threshold": 0.88,        # 勾环实测 0.97~1.00，未选 ≤0.07
         "step_settle_ms": 450,
+        "confirm_settle_ms": 700,
         "wait_s": 8.0,
         "poll_ms": 400,
         "cooldown_s": 25.0,
@@ -362,42 +388,79 @@ class GymPick(CustomAction):
         ctrl = context.tasker.controller
 
         if time.time() - getattr(GymPick, "_clicked_at", 0.0) < float(param["cooldown_s"]):
-            _cd_log("pick_cd", "[Gym] 刚选过一轮，等游戏自动锁定（不再点）")
+            _cd_log("pick_cd", "[Gym] 刚选过一轮，本轮只等不点")
             return True
 
         gray, _ = _grab_both(ctrl)
         if gray is None:
             print("[Gym] 选人页截图失败，本轮不点", flush=True)
             return True
-        if not self._done(gray, param):
-            for i, xy in enumerate(param["slots"], 1):
-                if self._grab_and_check(ctrl, param):
-                    print("[Gym] 已满 3 人，提前停手", flush=True)
-                    break
-                _click(ctrl, (int(xy[0]), int(xy[1])),
-                       int(param["step_settle_ms"]), f"选第 {i} 格")
-            else:
-                print("[Gym] 3 格都点完，等「等待对方确定中」", flush=True)
+
+        # ① 已经点过确定，等对手 → 一次都别点
+        if self._waiting(gray, param):
+            _cd_log("pick_wait", "[Gym] 已确定，等对方确定中（不点）")
+            return True
+
+        # ② 3 人已满但还没确定 → 直接点确定（上次点完没等到，重进这一页）
+        if self._confirm_xy(gray, param)[0] >= 0:
+            self._confirm(ctrl, gray, param, "已满 3 人")
+            return True
+
+        # ③ 还在选：逐格点，已勾的跳过
+        for i, xy in enumerate(param["slots"], 1):
+            if self._checked(gray, param, xy):
+                print(f"[Gym] 第 {i} 格已有勾，跳过（防止 toggle 掉）", flush=True)
+                continue
+            _click(ctrl, (int(xy[0]), int(xy[1])),
+                   int(param["step_settle_ms"]), f"选第 {i} 格")
+            gray, _ = _grab_both(ctrl)
+            if gray is None:
+                break
+            if self._confirm_xy(gray, param)[0] >= 0:
+                print("[Gym] 已满 3 人", flush=True)
+                break
 
         GymPick._clicked_at = time.time()
-        if self._wait_done(ctrl, param):
-            print("[Gym] [OK] 选人完成，等游戏开打", flush=True)
+        if gray is not None and self._confirm_xy(gray, param)[0] >= 0:
+            self._confirm(ctrl, gray, param, "选完 3 格")
         else:
-            print(f"[Gym] [X] {param['wait_s']:.0f}s 内没等到「等待对方确定中」，"
-                  "交给倒计时自动锁定", flush=True)
+            print("[Gym] [X] 没看到「确定」按钮（3 人未满或画面未刷新），"
+                  "交给下一轮补点", flush=True)
         return True
 
-    def _done(self, gray, param) -> bool:
+    def _confirm(self, ctrl, gray, param, why) -> None:
+        """点「确定」并等「等待对方确定中」出现。"""
+        score, xy = self._confirm_xy(gray, param)
+        _click(ctrl, xy, int(param["confirm_settle_ms"]),
+               f"「确定」(score={score:.2f}，{why})")
+        GymPick._clicked_at = time.time()
+        if self._wait_done(ctrl, param):
+            print("[Gym] [OK] 已确定，等开打", flush=True)
+        else:
+            print(f"[Gym] [X] {param['wait_s']:.0f}s 内没等到「等待对方确定中」",
+                  flush=True)
+
+    def _waiting(self, gray, param) -> bool:
         return _match(gray, "gym_pickwait", param["tip_roi"])[0] >= float(param["tip_threshold"])
 
-    def _grab_and_check(self, ctrl, param) -> bool:
-        gray, _ = _grab_both(ctrl)
-        return gray is not None and self._done(gray, param)
+    def _confirm_xy(self, gray, param):
+        """「确定」按钮位置。没出现返回 (-1, (0,0))。"""
+        score, xy = _match(gray, "gym_confirm", param["tip_roi"])
+        if score < float(param["tip_threshold"]):
+            return -1.0, (0, 0)
+        return score, xy
+
+    def _checked(self, gray, param, xy) -> bool:
+        """该列立绘是否已有金色勾环。"""
+        pad = int(param["check_pad"])
+        roi = [int(xy[0]) - pad, int(xy[1]) - pad, pad * 2, pad * 2]
+        return _match(gray, "gym_check", roi)[0] >= float(param["check_threshold"])
 
     def _wait_done(self, ctrl, param) -> bool:
         deadline = time.time() + float(param["wait_s"])
         while time.time() < deadline:
-            if self._grab_and_check(ctrl, param):
+            gray, _ = _grab_both(ctrl)
+            if gray is not None and self._waiting(gray, param):
                 return True
             time.sleep(float(param["poll_ms"]) / 1000.0)
         return False
