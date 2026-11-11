@@ -68,6 +68,17 @@
 - `Arena_RankUp`：胜利后「KOF段位提升」全屏弹窗，**顺序=结算页→点确认→它，不顶替结算页**。`rank_up_title` ROI[300,60,720,130] ≥0.8（弹窗 1.0/其它 ≤0.248）→ 点确认 (639,611)。确认键不在盲点 → CombatFighter `_rank_up_hit` 命中即 break。
 - 旧的 `Arena_RankPage` / `Arena_StuckRecover` 两个兜底节点已不在 pipeline 里（v1.2.17 回退时去掉，v1.2.30 由 Router 的「未知页等待」接手）。
 
+## 道馆挑战（v1.2.33 新增，与竞技场同构）
+- 代码 `assets/agent/gym_actions.py`，pipeline `assets/resource/pipeline/gym.json`（9 节点），任务 `gym_challenge`，无限循环。
+- **判页优先级 fight > result > pick > wait > page > home > unknown**；未知页 = 角色展示 / VS 倒计时(~16s) / 战斗准备，挂起轮询 **0.25s**、**`unknown_back_s=25`**（VS 倒计时 16s，沿用竞技场 5s 会误点）。
+- 入口 = 主城右上鸟居 **(1153, 99)**；道馆挂牌 1280 坐标：樱花 `[177,373]` / 觉醒 `[361,109]` / 克隆 `[533,333]` / 暴走 `[773,181]`（**程序找白色四字文本块算出来的，肉眼猜连错 4 次**）。选择做成 option「道馆选择」。
+- **道馆选人页选满自动锁定，没有确定按钮**；结算页是「点击空白处关闭」，也没有确定按钮。别去找按钮。
+- 选人固定点 `[[105,185],[257,185],[409,185]]`，**点前必须查 `gym_pickwait`**，否则第二次点把已选角色 toggle 掉。
+- 战斗 3v3 多回合，**每回合弹 WINNER 但战斗继续**，WINNER 不是结束信号。技能 ROI 与 1v1 像素一致 → `CombatFighter` 直接复用（新增 `gym_result_threshold`，未设置就跳过结算检测，竞技场零影响）。
+- **结算关闭后的残余帧会判成战斗**：点完空白只等 800ms，1~2s 后血条还在淡出 → Router 判 fight 去打空气。修法：`_wait_vanish()` 轮询等 `gym_close` 消失（实测 1.5~2.2s，上限 4s）+ `tail_s 0.8`。
+- **「点完页面不变」必须加 cooldown**：`GymPage.cooldown_s=40`（匹配中）、`GymHome`/`GymPick` 各自也有。
+- `debug/_test_v1233.py` 152 项；49 帧录像回放仅 1 帧不匹配（KO 空档帧）。
+
 ## 工具
 - base pipeline 用默认值，个性化走 option。
 - MaaDebugger 不读 interface.json、不拉 agent；先起 agent 再 CONNECT。
