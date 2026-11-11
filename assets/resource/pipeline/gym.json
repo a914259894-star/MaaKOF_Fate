@@ -1,0 +1,321 @@
+{
+    "Gym_Enter": {
+        "recognition": "DirectHit",
+        "action": "DoNothing",
+        "timeout": 60000,
+        "rate_limit": 200,
+        "next": [
+            "Gym_Router"
+        ]
+    },
+    "Gym_Router": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "GymRouter",
+        "custom_action_param": {
+            "fight_roi": [
+                88,
+                14,
+                1104,
+                38
+            ],
+            "fight_threshold": 0.65,
+            "result_roi": [
+                500,
+                590,
+                280,
+                100
+            ],
+            "result_threshold": 0.85,
+            "pick_roi": [
+                520,
+                600,
+                260,
+                100
+            ],
+            "pick_threshold": 0.85,
+            "vsok_roi": [
+                470,
+                545,
+                340,
+                120
+            ],
+            "vsok_threshold": 0.85,
+            "page_roi": [
+                0,
+                0,
+                260,
+                90
+            ],
+            "page_threshold": 0.85,
+            "home_roi": [
+                0,
+                0,
+                0,
+                0
+            ],
+            "home_threshold": 0.85,
+            "unknown_back_s": 25
+        },
+        "timeout": 60000,
+        "rate_limit": 200,
+        "pre_delay": 0,
+        "post_delay": 0,
+        "next": [
+            "Gym_Wait"
+        ]
+    },
+    "Gym_Wait": {
+        "recognition": "DirectHit",
+        "action": "DoNothing",
+        "timeout": 60000,
+        "rate_limit": 200,
+        "pre_delay": 0,
+        "post_delay": 250,
+        "next": [
+            "Gym_Router"
+        ]
+    },
+    "Gym_Back": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "ArenaSafeBack",
+        "timeout": 60000,
+        "rate_limit": 3000,
+        "pre_delay": 200,
+        "post_delay": 1500,
+        "next": [
+            "Gym_Router"
+        ]
+    },
+    "Gym_Home": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "GymHome",
+        "custom_action_param": {
+            "target": [
+                1153,
+                99
+            ],
+            "settle_ms": 1200,
+            "cooldown_s": 5
+        },
+        "timeout": 60000,
+        "rate_limit": 1000,
+        "pre_delay": 0,
+        "post_delay": 200,
+        "next": [
+            "Gym_Router"
+        ]
+    },
+    "Gym_Page": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "GymPage",
+        "custom_action_param": {
+            "dojo_xy": [
+                177,
+                373
+            ],
+            "match_xy": [
+                1161,
+                621
+            ],
+            "dojo_settle_ms": 700,
+            "match_settle_ms": 1500,
+            "cooldown_s": 40
+        },
+        "timeout": 60000,
+        "rate_limit": 1000,
+        "pre_delay": 0,
+        "post_delay": 200,
+        "next": [
+            "Gym_Router"
+        ]
+    },
+    "Gym_Pick": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "GymPick",
+        "custom_action_param": {
+            "slots": [
+                [
+                    105,
+                    185
+                ],
+                [
+                    257,
+                    185
+                ],
+                [
+                    409,
+                    185
+                ]
+            ],
+            "step_settle_ms": 450,
+            "wait_s": 8,
+            "cooldown_s": 25
+        },
+        "timeout": 120000,
+        "next": [
+            "Gym_Router"
+        ]
+    },
+    "Gym_Result": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "GymResult",
+        "custom_action_param": {
+            "target": [
+                200,
+                467
+            ],
+            "settle_ms": 800,
+            "vanish_s": 4,
+            "poll_ms": 300,
+            "tail_s": 0.8,
+            "cooldown_s": 6,
+            "roi": [
+                500,
+                590,
+                280,
+                100
+            ],
+            "threshold": 0.85
+        },
+        "timeout": 60000,
+        "rate_limit": 1000,
+        "pre_delay": 0,
+        "post_delay": 200,
+        "next": [
+            "Gym_Router"
+        ]
+    },
+    "Gym_Fight": {
+        "recognition": "DirectHit",
+        "action": "Custom",
+        "custom_action": "CombatFighter",
+        "custom_action_param": {
+            "duration": 900,
+            "interval": 0,
+            "skills": [
+                "Fight_Substitute"
+            ],
+            "skill_cycle": [
+                "skill1",
+                "skill2",
+                "skill3",
+                "ult",
+                "secret"
+            ],
+            "skill_tap": {
+                "hold_ms": 30,
+                "interval_ms": 30
+            },
+            "normal_tap": {
+                "hold_ms": 40,
+                "interval_ms": 150,
+                "times": 1
+            },
+            "keep_moving": false,
+            "move_dir": [
+                -1,
+                0
+            ],
+            "result_nodes": [
+                "Fight_Lose"
+            ],
+            "result_interval": 4.0,
+            "wrong_threshold": 0.85,
+            "main_threshold": 0.8,
+            "back_xy": [
+                1244,
+                28
+            ],
+            "user_close_xy": [
+                843,
+                109
+            ],
+            "wrong_settle_ms": 1200,
+            "wrong_max_layers": 12,
+            "team_roi": [
+                380,
+                20,
+                560,
+                90
+            ],
+            "team_threshold": 0.9,
+            "home_threshold": 0.85,
+            "home_roi": [
+                0,
+                0,
+                0,
+                0
+            ],
+            "rank_up_threshold": 0.8,
+            "rank_up_roi": [
+                300,
+                60,
+                720,
+                130
+            ],
+            "settle_threshold": 0.85,
+            "settle_roi": [
+                410,
+                70,
+                430,
+                130
+            ],
+            "arena_threshold": 0.85,
+            "arena_roi": [
+                0,
+                0,
+                240,
+                90
+            ],
+            "battle_threshold": 0.65,
+            "battle_roi": [
+                88,
+                14,
+                1104,
+                38
+            ],
+            "ready_only": true,
+            "ready_miss_s": 10,
+            "normal_per_round": 1,
+            "min_round_ms": 150,
+            "hp_roi": [
+                18,
+                44,
+                80,
+                1210
+            ],
+            "hp_self_x": [
+                115,
+                448
+            ],
+            "hp_enemy_x": [
+                831,
+                1164
+            ],
+            "hp_drop_px": 4,
+            "sub_burst_times": 2,
+            "sub_burst_cd_s": 1.5,
+            "ko_quiet_enable": false,
+            "ko_quiet_max_s": 20,
+            "ko_gone_s": 2.0,
+            "ko_low_px": 12,
+            "gym_result_threshold": 0.85,
+            "gym_result_roi": [
+                500,
+                590,
+                280,
+                100
+            ]
+        },
+        "timeout": 960000,
+        "next": [
+            "Gym_Router"
+        ]
+    }
+}

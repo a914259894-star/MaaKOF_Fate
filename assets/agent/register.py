@@ -64,6 +64,7 @@ from combat_recognition import CombatAlwaysHit, SkillReadyBright
 from farm_actions import FarmTap
 from arena_actions import ArenaPick, MasterPick, MasterTeamFix
 from page_router import ArenaRouter, ArenaSettleOk, ArenaRankUp, ArenaMasterMatch
+from gym_actions import GymRouter, GymHome, GymPage, GymPick, GymResult
 
 # (注册名, 实例)
 CUSTOM_ACTIONS = [
@@ -80,6 +81,12 @@ CUSTOM_ACTIONS = [
     ("ArenaSettleOk", ArenaSettleOk()),  # 结算页点确定（带守卫的 DirectHit 版）
     ("ArenaRankUp", ArenaRankUp()),  # KOF段位提升弹窗点确认
     ("ArenaMasterMatch", ArenaMasterMatch()),  # 大师团页点匹配战斗（带页面守卫）
+    # —— 道馆挑战（v1.2.33）——
+    ("GymRouter", GymRouter()),  # 道馆流程的判别点
+    ("GymHome", GymHome()),  # 主城点「道馆挑战」鸟居图标
+    ("GymPage", GymPage()),  # 道馆页选道馆 + 点匹配
+    ("GymPick", GymPick()),  # 选人页点前 3 格
+    ("GymResult", GymResult()),  # 整场结算点空白关闭
 ]
 
 CUSTOM_RECOGNITIONS = [

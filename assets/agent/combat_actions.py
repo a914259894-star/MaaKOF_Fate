@@ -416,6 +416,13 @@ class CombatFighter(CustomAction):
                         print("[CombatFighter] 检测到「KOF段位提升」弹窗，立即停手"
                               "（交给流水线点确认）", flush=True)
                         break
+                    # 道馆挑战整场结算（v1.2.33）：3v3 多回合，每回合都有 WINNER
+                    # 但战斗不退出；只有这一页（「战斗胜利/失败 + 点击空白处关闭」）
+                    # 才是真的打完。没有确定按钮，不认就会空点到超时。
+                    if self._gym_result_hit(gray, param):
+                        print("[CombatFighter] 检测到道馆整场结算页，立即停手"
+                              "（交给 Gym_Result）", flush=True)
+                        break
 
                 # 每 10s 打一个画面指纹：数字一直完全不变 => 截图是死的旧帧
                 now = time.time()
@@ -728,6 +735,31 @@ class CombatFighter(CustomAction):
         return cls._match_score(gray, tpl, roi) >= th
 
     @classmethod
+    def _gym_result_hit(cls, gray, param) -> bool:
+        """道馆挑战「整场结算」页（v1.2.33）。
+
+        为什么必须单独一条：道馆是 3v3 多回合，**每一回合结束都会弹 WINNER**，
+        但战斗不退出、角色换人接着打。只有整场打完才出这一页，它写的是
+        「战斗胜利 / 战斗失败 + 点击空白处关闭」，**没有「确定」按钮**，
+        所以 `_settle_hit`（认 win/lose 大字 + 确定键）认不出来 —— 不认就会
+        在结算页上空点到 960 秒超时。
+
+        判据用底部「点击空白处关闭」这行小字：赢和输两边都有，一个模板通吃。
+        实测本页 1.000 / 其它页 <=0.488。
+
+        只在 param 里给了 `gym_result_threshold` 时才查 —— 竞技场跑的时候不做
+        这次无用的模板匹配（每轮省 2~3ms）。
+        """
+        th = param.get("gym_result_threshold")
+        if not th:
+            return False
+        tpl = cls._load_tpl("gym_close")
+        if tpl is None:
+            return False
+        roi = tuple(int(v) for v in param.get("gym_result_roi", [500, 590, 280, 100]))
+        return cls._match_score(gray, tpl, roi) >= float(th)
+
+    @classmethod
     def _ready_keys(cls, img, cfg) -> set:
         """本轮「技能已就绪」的键集合（img 为 BGR cached_image，cfg 来自 combat.json）。
 
@@ -886,6 +918,7 @@ class CombatFighter(CustomAction):
             if (self._settle_hit(gray, param) or self._arena_page_hit(gray, param)
                     or self._team_page_hit(gray, param)
                     or self._rank_up_hit(gray, param)
+                    or self._gym_result_hit(gray, param)
                     or self._home_page_hit(gray, param)):
                 return "page"
         print(f"[CombatFighter] KO 静默超时 {max_s:.0f}s，恢复出招（防卡死）", flush=True)
