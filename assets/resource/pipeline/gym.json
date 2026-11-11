@@ -34,6 +34,13 @@
                 100
             ],
             "pick_threshold": 0.85,
+            "order_roi": [
+                0,
+                0,
+                1280,
+                160
+            ],
+            "order_threshold": 0.85,
             "vsok_roi": [
                 470,
                 545,
@@ -55,7 +62,7 @@
                 0
             ],
             "home_threshold": 0.85,
-            "unknown_back_s": 45
+            "unknown_back_s": 20
         },
         "timeout": 60000,
         "rate_limit": 200,

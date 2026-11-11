@@ -25,7 +25,14 @@
             "mode": "1v1",
             "unknown_back_s": 5,
             "unknown_back_hard_s": 5,
-            "unknown_need_arrow": false
+            "unknown_need_arrow": false,
+            "order_roi": [
+                0,
+                0,
+                1280,
+                160
+            ],
+            "order_threshold": 0.85
         },
         "pre_delay": 0,
         "post_delay": 0,
@@ -43,7 +50,14 @@
             "mode": "master",
             "unknown_back_s": 5,
             "unknown_back_hard_s": 5,
-            "unknown_need_arrow": false
+            "unknown_need_arrow": false,
+            "order_roi": [
+                0,
+                0,
+                1280,
+                160
+            ],
+            "order_threshold": 0.85
         },
         "pre_delay": 0,
         "post_delay": 0,

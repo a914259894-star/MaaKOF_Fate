@@ -7,6 +7,8 @@
     · 匹配是 PVP（对面是真人），匹配中页面完全不变
     · 选人是横排 8 格大立绘 + 底部 3 个队伍槽，选满 3 人后**必须点「确定」**，
       不点就一直停在那一页（不会自动锁定）
+    · 点完「确定」后同样要经过「点击格斗家确定顺序」页（和 1v1 / 大师团同一张
+      UI）；那一页**不点**，等 10 秒倒计时归零自动按默认顺序确定
     · 战斗是 3v3 多回合，每回合结束都弹 WINNER，但战斗不退出
     · 整场结算写「战斗胜利 / 战斗失败」+「点击空白处关闭」，**没有确定按钮**
     · 结算后还有一段角色展示加载，然后才回道馆页
@@ -20,7 +22,17 @@
     gym_picktip    选人页(未满)      1.000    0.709（结算页）
     gym_pickwait   选人页(已确定)    1.000    0.720（结算页）
     gym_confirm    选人页(满 3 未确定) 1.000   0.6x（其余所有页）
+    order_confirm  出手顺序页        0.981    0.579（其余所有页）
     gym_close      整场结算页        1.000    0.488
+
+一局完整时序（录像每 0.5s 一帧切出来的）::
+
+    23.0–24.0  gym_confirm      1.0s   满 3 未确定 → 点「确定」
+    24.5–27.0  gym_pickwait     2.5s   等待对方确定中
+    27.5–28.5  未知             1.5s   转场
+    29.0–37.0  order            8.0s   点击格斗家确定顺序 → **只等不点**
+    37.5–45.5  未知             8.0s   战斗准备中 + 资源加载
+    46.0–      battle_hp1              开打
 
 `gym_close` 用「点击空白处关闭」而不是「战斗胜利/失败」—— 这行小字胜负两边
 都有，一个模板同时覆盖赢和输；而且赢的画面在录像里没出现过，做了也没法验证。
@@ -58,6 +70,7 @@ PAGE_CN = {
     "wait": "匹配/VS 展示",
     "page": "道馆挑战页",
     "home": "主城",
+    "order": "出手顺序页",
     "unknown": "未知页",
 }
 
@@ -94,14 +107,15 @@ class GymRouter(CustomAction):
             "fight_roi": [88,14,1104,38], "fight_threshold": 0.65,
             "result_roi": [500,590,280,100], "result_threshold": 0.85,
             "pick_roi": [520,600,260,100],  "pick_threshold": 0.85,
+            "order_roi": [0,0,1280,160],    "order_threshold": 0.85,
             "vsok_roi": [470,545,340,120],  "vsok_threshold": 0.85,
             "page_roi": [0,0,260,90],       "page_threshold": 0.85,
             "home_roi": [0,0,0,0],          "home_threshold": 0.85,
-            "unknown_back_s": 45.0
+            "unknown_back_s": 20.0
         }
 
     判页顺序（不能随便调，理由见各分支注释）：
-        战斗 > 整场结算 > 选人 > 匹配成功 > 道馆页 > 主城 > 未知
+        战斗 > 整场结算 > 选人 > 出手顺序 > 匹配成功 > 道馆页 > 主城 > 未知
     """
 
     DEFAULTS = {
@@ -109,18 +123,25 @@ class GymRouter(CustomAction):
         "fight_threshold": 0.65,
         "result_roi": [500, 590, 280, 100],
         "result_threshold": 0.85,
+        # 选人页三种状态共用同一块区域（底部提示条 / 红色确定按钮）
         "pick_roi": [520, 600, 260, 100],
         "pick_threshold": 0.85,
+        # 「点击格斗家确定顺序」页。判据直接复用竞技场的 order_confirm
+        # （页顶/右上橙色标题，45x300）：道馆这一页和 1v1 是同一张 UI，
+        # 实测 u33.0 那一帧 0.981，其余全部页面 <=0.579，阈值 0.85 余量 0.27。
+        "order_roi": [0, 0, 1280, 160],
+        "order_threshold": 0.85,
         "vsok_roi": [470, 545, 340, 120],
         "vsok_threshold": 0.85,
         "page_roi": [0, 0, 260, 90],
         "page_threshold": 0.85,
         "home_roi": [0, 0, 0, 0],
         "home_threshold": 0.85,
-        # 实测：点完「确定」→ 开打之间有连续 **25 秒** 认不出的画面
-        # （VS 登场 15 秒倒数 → 战斗准备中 + 资源加载 → ROUND 1）。竞技场那边
-        # 是 5 秒兜底，这里必须放宽到 45，否则会在 VS 中途点返回把对局退掉。
-        "unknown_back_s": 45.0,
+        # 实测（每 0.5s 一帧切全片）：确定 → 已确定 2.5s → 转场 1.5s →
+        # 顺序页 8.0s → 战斗准备/加载 8.0s → 开打。认出顺序页之后，最长
+        # 连续未知只有 8.0s，所以 20s 足够；原来 45s 是因为把顺序页也算进了
+        # 未知窗口（那时还没认这一页）。
+        "unknown_back_s": 20.0,
     }
 
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
@@ -152,6 +173,8 @@ class GymRouter(CustomAction):
                 "fight": "Gym_Fight",
                 "result": "Gym_Result",
                 "pick": "Gym_Pick",
+                # 顺序页只是等：游戏 10 秒倒计时会自动按默认顺序确定。
+                "order": "Gym_Wait",
                 "page": "Gym_Page",
                 "home": "Gym_Home",
                 "wait": "Gym_Wait",
@@ -177,26 +200,36 @@ class GymRouter(CustomAction):
         if _match(gray, "gym_close", p["result_roi"])[0] >= p["result_threshold"]:
             return "result"
 
-        # 3) 选人页：底部提示条 / 「确定」按钮。三种状态都要认 ——
+        # 3) 「点击格斗家确定顺序」页：选完人点「确定」之后必然经过这一页，
+        #    和 1v1 / 大师团是同一张 UI（复用竞技场模板 order_confirm）。
+        #    **只等不点** —— 游戏 10 秒倒计时归零会按默认顺序（从左到右）自动
+        #    确定，点了反而可能改掉出场顺序。1v1 那边也是等过去的。
+        #    为什么排在选人之前：选人分支会**点立绘**，顺序页上点立绘会改出场
+        #    顺序；而顺序页被误判成选人页的代价远大于反过来（实测选人页拿
+        #    order_confirm 只有 0.49，反过来 order 页上 pick 判据全部 <0.85）。
+        if _match(gray, "order_confirm", p["order_roi"])[0] >= p["order_threshold"]:
+            return "order"
+
+        # 4) 选人页：底部提示条 / 「确定」按钮。三种状态都要认 ——
         #    未满 3 人是「请选择格斗家(X/3)」；满 3 人提示消失、原地长出红色
-        #    「确定」；点过确定变成「等待对方确定中」。少认一个，那一段就会被
-        #    判成未知页，25 秒后点返回把刚匹配到的对局退掉。
+        #    「确定」；点过确定变成「等待对方确定中」。少认一个，那一段就会
+        #    整段掉进未知页。
         if (_match(gray, "gym_picktip", p["pick_roi"])[0] >= p["pick_threshold"]
                 or _match(gray, "gym_pickwait", p["pick_roi"])[0] >= p["pick_threshold"]
                 or _match(gray, "gym_confirm", p["pick_roi"])[0] >= p["pick_threshold"]):
             return "pick"
 
-        # 4) 匹配成功 VS：只等待，不点。放道馆页之前 —— 这个页面的背景是
+        # 5) 匹配成功 VS：只等待，不点。放道馆页之前 —— 这个页面的背景是
         #    双方立绘，左上角已经没有道馆 logo，两个判据不会互相干扰。
         if _match(gray, "gym_vsok", p["vsok_roi"])[0] >= p["vsok_threshold"]:
             return "wait"
 
-        # 5) 道馆挑战页：左上角「道馆挑战 KING OF FIGHTERS」横幅。
+        # 6) 道馆挑战页：左上角「道馆挑战 KING OF FIGHTERS」横幅。
         #    实测道馆页 1.000 / 战斗 0.640 / 结算 0.557，阈值 0.85 余量 0.21。
         if _match(gray, "gym_title", p["page_roi"])[0] >= p["page_threshold"]:
             return "page"
 
-        # 6) 主城：只能全屏找（图标位置随 UI 版本变），和竞技场同一个阈值。
+        # 7) 主城：只能全屏找（图标位置随 UI 版本变），和竞技场同一个阈值。
         if _match(gray, "main_arena_btn", p["home_roi"])[0] >= p["home_threshold"]:
             return "home"
 
@@ -205,17 +238,17 @@ class GymRouter(CustomAction):
     def _unknown_step(self, p) -> str:
         """未知页：纯等待，一次都不点；连续够久才交给安全返回。
 
-        道馆流程里落进未知页的都是正常过渡：匹配中、VS 倒计时（15~16 秒）、
-        「战斗准备中」加载、结算后的角色展示。所以这里**必须**等到
-        unknown_back_s（默认 25 秒），否则会在 VS 展示中途点返回，把刚匹配到的
-        对局直接退掉。
+        道馆流程里落进未知页的都是正常过渡：匹配中、选人后的转场、
+        「战斗准备中」加载、结算后的角色展示。认出顺序页之后，最长的一段未知
+        实测只有 8.0 秒（37.5~45.5 的加载），所以兜底取 20 秒 —— 既留了一倍
+        余量，又不会像 45 秒那样在这段真卡住时要等那么久才肯点返回。
         """
         now = time.time()
         if getattr(self, "_unknown_since", None) is None:
             self._unknown_since = now
             print("[Gym] 进入未知页，挂起等待（不做任何点击）", flush=True)
         waited = now - self._unknown_since
-        limit = float(p.get("unknown_back_s", 25.0))
+        limit = float(p.get("unknown_back_s", 20.0))
         if waited >= limit:
             print(f"[Gym] 未知页已持续 {waited:.0f}s（>{limit:.0f}s），交给安全返回",
                   flush=True)

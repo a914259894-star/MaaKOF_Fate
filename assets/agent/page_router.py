@@ -15,7 +15,7 @@
       流程跑完 next 回到 Router → 再判一次 → 再走一次
 
 判别优先级（用户 2026-11-06 指定：战斗最优先、未知界面等待）：
-    战斗 > KOF段位提升 > 胜负结算 > 选人 > 大师团页 > 竞技场主页 > 主城 > 未知
+    战斗 > KOF段位提升 > 胜负结算 > 出手顺序 > 选人 > 大师团页 > 竞技场主页 > 主城 > 未知
 
 判不出来（未知页）就**挂起等待**，绝不盲点：加载页 / VS 入场 / 一穿三 / 至尊赛播报
 这些都算未知页，一直等到画面变成可识别页面为止，期间一次都不点。
@@ -173,6 +173,7 @@ class ArenaRouter(CustomAction):
         "settle_roi": [410,70,430,130], "settle_threshold": 0.85,
         "pick_roi": [0,0,0,0], "pick_threshold": 0.82,       // 0 = 全屏
         "pick_tip_roi": [520,645,240,70], "pick_tip_threshold": 0.8,  // 底部「温馨提示」
+        "order_roi": [0,0,1280,160], "order_threshold": 0.85, // 「点击格斗家确定顺序」页
         "team_roi": [380,20,560,90], "team_threshold": 0.9,
         "arena_roi": [0,0,240,90], "arena_threshold": 0.85,
         "home_roi": [0,0,0,0], "home_threshold": 0.85,
@@ -198,6 +199,9 @@ class ArenaRouter(CustomAction):
         "settle_threshold": 0.85,
         "pick_roi": [0, 0, 0, 0],
         "pick_threshold": 0.82,
+        # 「点击格斗家确定顺序」页：页顶/右上橙色标题，正例 0.999、其它页 ≤0.58。
+        "order_roi": [0, 0, 1280, 160],
+        "order_threshold": 0.85,
         "pick_tip_roi": [520, 645, 240, 70],
         "pick_tip_threshold": 0.8,
         "team_roi": [380, 20, 560, 90],
@@ -225,6 +229,7 @@ class ArenaRouter(CustomAction):
         "rank_up": "KOF段位提升",
         "settle": "胜负结算",
         "pick": "选人",
+        "order": "出手顺序页",
         "team": "大师团页",
         "arena": "竞技场主页",
         "home": "主城",
@@ -273,6 +278,9 @@ class ArenaRouter(CustomAction):
                 "rank_up": "Arena_RankUp",
                 "settle": "Arena_SettleOk",
                 "pick": "Arena_MasterPick" if mode == "master" else "Arena_Pick",
+                # 顺序页只等不点，和未知页走同一个等待节点；区别是它会清零
+                # unknown 计时，所以顺序页那 8 秒不会把兜底推上去点返回。
+                "order": "Arena_UnknownWait",
             }[kind]
             self._unknown_since = None
 
@@ -300,21 +308,29 @@ class ArenaRouter(CustomAction):
                 or _match(gray, "lose_text", roi)[0] >= th):
             return "settle"
 
-        # 4) 选人页。1v1 用「近期使用」标签或「等待」提示；大师选人页只有「等待」。
+        # 4) 「点击格斗家确定顺序」页：选人点完「确定」之后必然经过，1v1 和
+        #    大师团都有。**只等不点**（游戏 10 秒倒计时归零会按默认顺序确定），
+        #    所以路由到 Arena_UnknownWait。排在选人之前是因为选人分支会点立绘，
+        #    在顺序页点立绘会改掉出场顺序；而误判成 order 只是多等一轮
+        #    （选人页拿 order_confirm 实测只有 0.49）。
+        if _match(gray, "order_confirm", param["order_roi"])[0] >= param["order_threshold"]:
+            return "order"
+
+        # 5) 选人页。1v1 用「近期使用」标签或「等待」提示；大师选人页只有「等待」。
         if self._pick_hit(gray, param, mode):
             return "pick"
 
-        # 5) 大师团/大师竞技页：顶部横幅。实测 0.92~1.00，阈值 0.9 有余量。
+        # 6) 大师团/大师竞技页：顶部横幅。实测 0.92~1.00，阈值 0.9 有余量。
         #    放在竞技场主页之前：这两个页面的 arena_title 分数也很高（大师页是
         #    独立的 master_title），先判 master 才能正确进「匹配战斗」那条线。
         if _match(gray, "master_title", param["team_roi"])[0] >= param["team_threshold"]:
             return "team"
 
-        # 6) 1v1 竞技场主页。ROI 化后 0.36ms，实测 0.991~0.994 / 至尊赛 0.565。
+        # 7) 1v1 竞技场主页。ROI 化后 0.36ms，实测 0.991~0.994 / 至尊赛 0.565。
         if _match(gray, "arena_title", param["arena_roi"])[0] >= param["arena_threshold"]:
             return "arena"
 
-        # 7) 主城：只能全屏找（图标位置随 UI 版本变），阈值 0.85 比旧节点的 0.7 严。
+        # 8) 主城：只能全屏找（图标位置随 UI 版本变），阈值 0.85 比旧节点的 0.7 严。
         if _match(gray, "main_arena_btn", param["home_roi"])[0] >= param["home_threshold"]:
             return "home"
 
