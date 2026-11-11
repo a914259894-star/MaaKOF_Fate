@@ -57,6 +57,21 @@ def _click(ctrl, xy, settle_ms=800, why="") -> None:
         time.sleep(settle_ms / 1000.0)
 
 
+_CD_LOG = {}
+
+
+def _cd_log(key, msg, every_s=5.0) -> None:
+    """cooldown 分支的日志节流。
+
+    Router 每 0.25 秒重判一次页面，而「点完匹配/选完人」这类 cooldown 长达
+    25~40 秒 —— 不节流的话每轮都打一行，一次匹配能刷上百行把真正的日志埋掉。
+    """
+    now = time.time()
+    if now - _CD_LOG.get(key, 0.0) >= every_s:
+        _CD_LOG[key] = now
+        print(msg, flush=True)
+
+
 class GymRouter(CustomAction):
     """道馆流程的唯一判别点：截一张图 → 判页 → override_next 精确路由。
 
@@ -117,7 +132,10 @@ class GymRouter(CustomAction):
         else:
             self._unknown_since = None
             target = {
-                "fight": "Fight_Once",
+                # 必须是 Gym_Fight（不是竞技场的 Fight_Once）：只有 Gym_Fight 带
+                # gym_result_threshold，战斗模块才会认道馆的「点击空白处关闭」结算页。
+                # 走 Fight_Once 的话打完一局没人认结算，会一直空点满 duration（15 分钟）。
+                "fight": "Gym_Fight",
                 "result": "Gym_Result",
                 "pick": "Gym_Pick",
                 "page": "Gym_Page",
@@ -286,7 +304,8 @@ class GymPage(CustomAction):
 
         since = time.time() - getattr(GymPage, "_clicked_at", 0.0)
         if since < float(param["cooldown_s"]):
-            print(f"[Gym] {since:.0f}s 前刚点过匹配，等待中（不再点）", flush=True)
+            _cd_log("page_cd",
+                    f"[Gym] {since:.0f}s 前刚点过匹配，等待中（不再点）")
             return True
 
         gray, _ = _grab_both(ctrl)
@@ -343,7 +362,7 @@ class GymPick(CustomAction):
         ctrl = context.tasker.controller
 
         if time.time() - getattr(GymPick, "_clicked_at", 0.0) < float(param["cooldown_s"]):
-            print("[Gym] 刚选过一轮，等游戏自动锁定（不再点）", flush=True)
+            _cd_log("pick_cd", "[Gym] 刚选过一轮，等游戏自动锁定（不再点）")
             return True
 
         gray, _ = _grab_both(ctrl)
